@@ -22,7 +22,7 @@ PB_TEST(hci_parse_command) {
   PB_CHECK_EQ(c.op, CMD_RESET);
   PB_CHECK_EQ(c.params.size(), 0u);
 
-  uint8_t bad[] = {0x03, 0x0C, 0x01, 0xAA};  // len 与实际不符
+  uint8_t bad[] = {0x03, 0x0C, 0x02, 0xAA};  // len=2 但只有 1 字节参数
   PB_CHECK(!parse_command(bad, 4, c));
   PB_CHECK(!parse_command(p, 2, c));
 }
