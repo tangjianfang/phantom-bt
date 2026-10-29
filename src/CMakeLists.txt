@@ -15,6 +15,7 @@ add_library(phantom_core STATIC
   control/commands.cpp
   hci/packets.h
   hci/controller.cpp
+  bluetooth/adapter_model.cpp
 )
 
 add_executable(phantombt cli/main.cpp)
