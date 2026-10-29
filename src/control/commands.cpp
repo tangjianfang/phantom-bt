@@ -27,6 +27,9 @@ std::vector<std::string> execute(sim::Simulator& sim, const std::string& line) {
     if (cmd == "load-hid" && args.size() == 2) {
       return {"OK " + sim.cmd_load_hid_profile(args[1])};
     }
+    if (cmd == "load-bt") {
+      return {"OK " + sim.cmd_load_bt_adapter()};
+    }
     if (cmd == "list") {
       std::vector<std::string> out;
       std::string l = sim.cmd_list();

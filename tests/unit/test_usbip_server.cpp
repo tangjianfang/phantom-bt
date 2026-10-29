@@ -3,6 +3,7 @@
 
 #include <windows.h>
 
+#include "bluetooth/adapter_model.h"
 #include "core/bytes.h"
 #include "core/net.h"
 #include "hid/hid_model.h"
@@ -228,6 +229,88 @@ PB_TEST(server_control_out_set_report_via_data_stage) {
   PB_CHECK(rep.has_value());
   PB_CHECK_EQ((*rep)[0], 0xEE);
   PB_CHECK_EQ((*rep)[1], 0xFF);
+  c.close();
+  srv.stop();
+}
+
+// —— M1 回环验收：完整模拟 Windows 蓝牙栈初始化序列（经 TCP/USB/IP，不经内核）——
+PB_TEST(server_bt_loopback_full_init) {
+  net::WsaSession w;
+  sim::DeviceRegistry reg;
+  auto bt = std::make_shared<bt::AdapterModel>(pb::hci::ControllerConfig{}, 7, 2);
+  reg.add(bt);
+  Server srv(reg, 0);
+  std::string err;
+  PB_CHECK(srv.start(&err));
+  auto c = net::TcpConn::connect("127.0.0.1", srv.port(), &err);
+  PB_CHECK(c.is_open());
+
+  // import 蓝牙适配器（busid 7-2）
+  ByteWriter wi;
+  wi.u32be(OP_REQ_IMPORT);
+  char busid[32] = "7-2";
+  wi.bytes((const uint8_t*)busid, 32);
+  send_raw(c, wi.buf());
+  auto imp = recv_n(c, 8);
+  PB_CHECK_EQ(imp[3], 0x04);
+  PB_CHECK_EQ(imp[7], 0x00);
+  recv_n(c, 312);
+
+  // EP0 类请求携带 HCI 命令；事件经 INT IN 0x81 取回
+  auto hci_cmd = [&](const std::vector<uint8_t>& cmd) {
+    ByteWriter w2;
+    w2.u32be(USBIP_CMD_SUBMIT);
+    w2.u32be(1);
+    w2.u32be(0x00070002);
+    w2.u32be(DIR_OUT);
+    w2.u32be(0);
+    w2.u32be(0);
+    w2.u32be((uint32_t)cmd.size());
+    w2.u32be(0);
+    w2.u32be(0);
+    w2.u32be(0);
+    uint8_t setup[8] = {0x20, 0x00, 0, 0, 0, 0, (uint8_t)cmd.size(), 0};
+    w2.bytes(setup, 8);
+    w2.bytes(cmd.data(), cmd.size());  // data stage
+    send_raw(c, w2.buf());
+    auto ret = recv_n(c, 40);
+    PB_CHECK_EQ(ret[3], 0x03);
+  };
+  auto poll_event = [&]() {
+    uint8_t zero8[8] = {};
+    send_cmd(c, 2, 0x81, DIR_IN, 16, zero8, 1);
+    auto ret = recv_n(c, 40);
+    PB_CHECK_EQ(ret[3], 0x03);
+    int32_t len = (int32_t)(((uint32_t)ret[24] << 24) | ((uint32_t)ret[25] << 16) |
+                            ((uint32_t)ret[26] << 8) | ret[27]);
+    PB_CHECK(len > 0);
+    return recv_n(c, (size_t)len);
+  };
+
+  // Windows 无线电初始化典型序列（12 命令）
+  hci_cmd({0x03, 0x0C, 0x00});            // Reset
+  hci_cmd({0x09, 0x10, 0x00});            // Read_BD_ADDR
+  hci_cmd({0x01, 0x10, 0x00});            // Read_Local_Version
+  hci_cmd({0x05, 0x10, 0x00});            // Read_Buffer_Size
+  hci_cmd({0x02, 0x10, 0x00});            // Read_Local_Supported_Commands
+  hci_cmd({0x03, 0x10, 0x00});            // Read_Local_Supported_Features
+  hci_cmd({0x33, 0x0C, 0x07, 0, 0, 0, 0, 0, 0, 0});  // Host_Buffer_Size
+  hci_cmd({0x01, 0x0C, 0x08, 0, 0, 0, 0, 0, 0, 0, 0});  // Set_Event_Mask
+  hci_cmd({0x6D, 0x0C, 0x02, 0x01, 0x01});  // Write_LE_Host_Support(1,1)
+  hci_cmd({0x02, 0x20, 0x00});            // LE_Read_Buffer_Size
+  hci_cmd({0x03, 0x20, 0x00});            // LE_Read_Local_Supported_Features
+  hci_cmd({0x0F, 0x20, 0x00});            // LE_Read_White_List_Size
+
+  int cc = 0, status_ok = 0;
+  for (int i = 0; i < 12; ++i) {
+    auto evt = poll_event();
+    PB_CHECK_EQ(evt[0], 0x0E);  // Command Complete
+    ++cc;
+    if (evt[5] == 0x00) ++status_ok;
+  }
+  PB_CHECK_EQ(cc, 12);
+  PB_CHECK_EQ(status_ok, 12);  // 全部 SUCCESS —— 无 UnknownCmd
+  PB_CHECK(bt->controller().radio_ready());
   c.close();
   srv.stop();
 }

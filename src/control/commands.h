@@ -9,6 +9,7 @@ namespace pb::control {
 
 // 语法（一行一条，空格分隔）：
 //  load-hid <path.json>   → OK <busid>
+//  load-bt                → OK <busid>
 //  list                   → 每设备一行 + OK-END
 //  attach <busid>         → OK
 //  detach <busid>         → OK

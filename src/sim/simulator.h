@@ -22,6 +22,7 @@ class Simulator {
 
   // 命令实现（文本协议，CLI/GUI/管道共享）；失败抛 std::runtime_error
   std::string cmd_load_hid_profile(const std::string& json_path);
+  std::string cmd_load_bt_adapter();
   std::string cmd_list();
   std::string cmd_attach(const std::string& busid);
   std::string cmd_detach(const std::string& busid);

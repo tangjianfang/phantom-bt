@@ -8,6 +8,7 @@
 #include "core/bytes.h"
 #include "core/log.h"
 #include "core/net.h"
+#include "bluetooth/adapter_model.h"
 #include "hid/hid_model.h"
 #include "hid/profiles.h"
 
@@ -18,6 +19,7 @@ struct Simulator::Impl {
   std::unique_ptr<usbip::Server> server;
   uint32_t next_devnum = 1;
   std::map<std::string, std::shared_ptr<hid::HidModel>> hid_models;  // busid → hid 模型
+  std::map<std::string, std::shared_ptr<bt::AdapterModel>> bt_models;
 };
 
 Simulator::Simulator() : impl_(std::make_unique<Impl>()) {}
@@ -53,6 +55,15 @@ std::string Simulator::cmd_load_hid_profile(const std::string& json_path) {
   char vidpid[16];
   std::snprintf(vidpid, sizeof(vidpid), "%04x:%04x", prof.vid, prof.pid);
   PB_LOG_INFO("sim: loaded hid profile '" + json_path + "' as " + busid + " (" + vidpid + ")");
+  return busid;
+}
+
+std::string Simulator::cmd_load_bt_adapter() {
+  uint32_t devnum = impl_->next_devnum++;
+  auto model = std::make_shared<bt::AdapterModel>(pb::hci::ControllerConfig{}, 7, devnum);
+  std::string busid = impl_->reg.add(model);
+  impl_->bt_models[busid] = model;
+  PB_LOG_INFO("sim: loaded bt adapter as " + busid);
   return busid;
 }
 

@@ -21,8 +21,11 @@
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Devices.Enumeration.h>
 #include <winrt/Windows.Devices.HumanInterfaceDevice.h>
+#include <winrt/Windows.Devices.Radios.h>
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.Storage.Streams.h>
+
+#include <windows.h>
 
 using namespace winrt;
 using namespace Windows::Devices::Enumeration;
@@ -131,6 +134,47 @@ int cmd_hid(const Args& a) {
   }
 }
 
+int cmd_radio_winrt(const Args& a) {
+  (void)a;
+  try {
+    auto radios = Windows::Devices::Radios::Radio::GetRadiosAsync().get();
+    for (auto const& r : radios) {
+      if (r.Kind() == Windows::Devices::Radios::RadioKind::Bluetooth) {
+        bool on = r.State() == Windows::Devices::Radios::RadioState::On;
+        if (on) return finish(true, "name:" + winrt::to_string(r.Name()), {});
+        return finish(false, "state:" + std::to_string((int32_t)r.State()), {});
+      }
+    }
+    return finish(false, "noradio", {});
+  } catch (const winrt::hresult_error& e) {
+    return finish(false, winrt::to_string(e.message()), {});
+  }
+}
+
+// 降级路径：查注册表判断 USB 蓝牙适配器驱动绑定（无需 WinRT）
+int cmd_radio_registry(const Args& a) {
+  (void)a;
+  HKEY key;
+  if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Enum\\USB", 0, KEY_READ,
+                    &key) != ERROR_SUCCESS) {
+    return finish(false, "no-usb-enum-key", {});
+  }
+  char sub[256];
+  DWORD i = 0;
+  for (; i < 4096; ++i) {
+    DWORD len = sizeof(sub);
+    if (RegEnumKeyExA(key, i, sub, &len, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS)
+      break;
+    // VID_0B00&PID_0001 = phantom-bt 适配器
+    if (std::string(sub, len).rfind("VID_0B00&PID_0001", 0) == 0) {
+      RegCloseKey(key);
+      return finish(true, "driver-bound:" + std::string(sub, len), {});
+    }
+  }
+  RegCloseKey(key);
+  return finish(false, "nodev", {});
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -142,6 +186,8 @@ int main(int argc, char** argv) {
   Args a = parse_args(argc, argv, 2);
   try {
     if (mode == "hid") return cmd_hid(a);
+    if (mode == "radio") return cmd_radio_winrt(a);
+    if (mode == "radio-registry") return cmd_radio_registry(a);
     std::fprintf(stderr, "winrt-probe: mode '%s' not implemented yet\n", mode.c_str());
     return 3;
   } catch (const std::exception& e) {
