@@ -15,14 +15,19 @@ PB_TEST(desc_device_minimal) {
   PB_CHECK_EQ(d[1], 1u);         // DT_DEVICE
   PB_CHECK_EQ(d[2], 0x00);       // bcdUSB LE = 0x0200
   PB_CHECK_EQ(d[3], 0x02);
-  PB_CHECK_EQ(d[4], 8u);         // bMaxPacketSize0
+  PB_CHECK_EQ(d[4], 0u);         // bDeviceClass
+  PB_CHECK_EQ(d[5], 0u);
+  PB_CHECK_EQ(d[6], 0u);
+  PB_CHECK_EQ(d[7], 8u);         // bMaxPacketSize0
   PB_CHECK_EQ(d[8], 0x34);       // idVendor LE
   PB_CHECK_EQ(d[9], 0x12);
   PB_CHECK_EQ(d[10], 0x78);      // idProduct LE
   PB_CHECK_EQ(d[11], 0x56);
-  PB_CHECK_EQ(d[13], 1u);        // iManufacturer
-  PB_CHECK_EQ(d[14], 2u);        // iProduct
-  PB_CHECK_EQ(d[15], 3u);        // iSerial
+  PB_CHECK_EQ(d[12], 0x00);      // bcdDevice 0x0100 LE
+  PB_CHECK_EQ(d[13], 0x01);
+  PB_CHECK_EQ(d[14], 1u);        // iManufacturer
+  PB_CHECK_EQ(d[15], 2u);        // iProduct
+  PB_CHECK_EQ(d[16], 3u);        // iSerial
   PB_CHECK_EQ(d[17], 1u);        // bNumConfigurations
 }
 
@@ -34,10 +39,10 @@ PB_TEST(desc_device_class_e0) {
   c.bcd_usb = 0x0110;
   c.max_packet0 = 64;
   auto d = build_device_descriptor(c);
-  PB_CHECK_EQ(d[4], 64u);
-  PB_CHECK_EQ(d[5], 0xE0);
+  PB_CHECK_EQ(d[4], 0xE0);  // bDeviceClass
+  PB_CHECK_EQ(d[5], 0x01);
   PB_CHECK_EQ(d[6], 0x01);
-  PB_CHECK_EQ(d[7], 0x01);
+  PB_CHECK_EQ(d[7], 64u);   // bMaxPacketSize0
   PB_CHECK_EQ(d[2], 0x10);  // bcdUSB 0x0110 LE
   PB_CHECK_EQ(d[3], 0x01);
 }
@@ -65,8 +70,9 @@ PB_TEST(desc_config_hid_interrupt) {
   PB_CHECK_EQ(cfg[3], 0u);
   PB_CHECK_EQ(cfg[4], 1u);          // bNumInterfaces
   PB_CHECK_EQ(cfg[5], 1u);          // bConfigurationValue
-  PB_CHECK_EQ(cfg[6], 0xA0u);       // attr: 0x80|remote_wakeup
-  PB_CHECK_EQ(cfg[7], 50u);         // bMaxPower
+  PB_CHECK_EQ(cfg[6], 0u);          // iConfiguration
+  PB_CHECK_EQ(cfg[7], 0xA0u);       // attr: 0x80|remote_wakeup
+  PB_CHECK_EQ(cfg[8], 50u);         // bMaxPower
   PB_CHECK_EQ(cfg[9], 9u);          // iface bLength
   PB_CHECK_EQ(cfg[10], 4u);         // DT_INTERFACE
   PB_CHECK_EQ(cfg[11], 0u);         // bInterfaceNumber
@@ -103,18 +109,18 @@ PB_TEST(desc_config_bluetooth_two_interfaces) {
   i1.iprotocol = 1;
   c.interfaces = {i0, i1};
   auto cfg = build_config_descriptor(c);
-  PB_CHECK_EQ(cfg.size(), 9u + 9u + 7 * 3 + 9u);  // 47
-  PB_CHECK_EQ(cfg[2], 47u);
+  PB_CHECK_EQ(cfg.size(), 9u + 9u + 7 * 3 + 9u);  // 48
+  PB_CHECK_EQ(cfg[2], 48u);
   PB_CHECK_EQ(cfg[3], 0u);
   PB_CHECK_EQ(cfg[4], 2u);       // bNumInterfaces=2
-  PB_CHECK_EQ(cfg[9], 0xE0u);    // iface0 class
-  PB_CHECK_EQ(cfg[11], 0u);
+  PB_CHECK_EQ(cfg[14], 0xE0u);   // iface0 class（iface@9: class@9+5）
+  PB_CHECK_EQ(cfg[11], 0u);      // iface0 number
   // iface0: 9+7*3=30 → iface1 起点 9+30=39
-  PB_CHECK_EQ(cfg[39], 9u);
-  PB_CHECK_EQ(cfg[40], 4u);
+  PB_CHECK_EQ(cfg[39], 9u);      // bLength
+  PB_CHECK_EQ(cfg[40], 4u);      // DT_INTERFACE
   PB_CHECK_EQ(cfg[41], 1u);      // bInterfaceNumber=1
-  PB_CHECK_EQ(cfg[44], 0u);      // bNumEndpoints=0（空 SCO alt0）
-  PB_CHECK_EQ(cfg[45], 0xE0u);
+  PB_CHECK_EQ(cfg[43], 0u);      // bNumEndpoints=0（空 SCO alt0）
+  PB_CHECK_EQ(cfg[44], 0xE0u);   // iface1 class
 }
 
 PB_TEST(desc_string_utf16le) {
