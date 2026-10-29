@@ -107,4 +107,9 @@ std::string to_hex(const uint8_t* p, size_t n);
 inline std::string to_hex(const std::vector<uint8_t>& v) { return to_hex(v.data(), v.size()); }
 std::vector<uint8_t> from_hex(std::string_view s);
 
+// UTF-8 <-> UTF-16 conversions (single shared copy for GUI and core callers;
+// Windows-only project, so windows.h macros are fine here).
+std::wstring to_w(std::string_view utf8);
+std::string from_w(std::wstring_view utf16);
+
 }  // namespace pb

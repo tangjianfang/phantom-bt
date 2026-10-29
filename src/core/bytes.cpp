@@ -1,5 +1,7 @@
 #include "core/bytes.h"
 
+#include <windows.h>
+
 namespace pb {
 
 std::string to_hex(const uint8_t* p, size_t n) {
@@ -29,6 +31,23 @@ std::vector<uint8_t> from_hex(std::string_view s) {
     out.push_back((hi << 4) | lo);
   }
   return out;
+}
+
+std::wstring to_w(std::string_view utf8) {
+  int n = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), (int)utf8.size(), nullptr, 0);
+  std::wstring w(n > 0 ? n : 0, 0);
+  if (n > 0) MultiByteToWideChar(CP_UTF8, 0, utf8.data(), (int)utf8.size(), w.data(), n);
+  return w;
+}
+
+std::string from_w(std::wstring_view utf16) {
+  int n = WideCharToMultiByte(CP_UTF8, 0, utf16.data(), (int)utf16.size(), nullptr, 0, nullptr,
+                              nullptr);
+  std::string s(n > 0 ? n : 0, 0);
+  if (n > 0)
+    WideCharToMultiByte(CP_UTF8, 0, utf16.data(), (int)utf16.size(), s.data(), n, nullptr,
+                        nullptr);
+  return s;
 }
 
 }  // namespace pb

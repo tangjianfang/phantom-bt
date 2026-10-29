@@ -13,6 +13,7 @@
 
 #include "control/commands.h"
 #include "core/bytes.h"
+#include "core/env_check.h"
 #include "core/net.h"
 #include "core/log.h"
 #include "sim/simulator.h"
@@ -210,6 +211,25 @@ int main(int argc, char** argv) {
   }
   std::string cmd = argv[1];
   if (cmd == "selftest") return run_selftest();
+
+  if (cmd == "doctor") {
+    auto checks = pb::env::run_checks();
+    int bad = 0;
+    for (auto& c : checks) {
+      const char* mark = c.status == pb::env::Status::Ok
+                             ? "[ OK ]"
+                             : (c.status == pb::env::Status::Warn
+                                    ? "[WARN]"
+                                    : (c.status == pb::env::Status::Info ? "[INFO]" : "[FAIL]"));
+      // Info rows are informational: same predicate the GUI first-run check uses.
+      if (c.status == pb::env::Status::Warn || c.status == pb::env::Status::Fail) ++bad;
+      std::printf("%s %s\n      %s\n", mark, c.title.c_str(), c.detail.c_str());
+      if (!c.action_url.empty())
+        std::printf("      -> %s (%s)\n", c.action_label.c_str(), c.action_url.c_str());
+    }
+    std::printf("== %zu 项检测，%d 项需处理 ==\n", checks.size(), bad);
+    return bad ? 1 : 0;
+  }
 
   if (cmd == "serve") {
     uint16_t port = 3240;

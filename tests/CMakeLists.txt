@@ -25,6 +25,8 @@ add_executable(phantombt-tests
   unit/test_pipe_gui.cpp
   unit/test_btsnoop.cpp
   unit/test_coverage_extra.cpp
+  unit/test_env_check.cpp
+  unit/test_test_runner.cpp
 )
 target_link_libraries(phantombt-tests PRIVATE phantom_core)
 target_compile_definitions(phantombt-tests PRIVATE PB_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
