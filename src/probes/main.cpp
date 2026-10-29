@@ -19,6 +19,8 @@
 
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Collections.h>
+#include <winrt/Windows.Devices.Bluetooth.h>
+#include <winrt/Windows.Devices.Bluetooth.Advertisement.h>
 #include <winrt/Windows.Devices.Enumeration.h>
 #include <winrt/Windows.Devices.HumanInterfaceDevice.h>
 #include <winrt/Windows.Devices.Radios.h>
@@ -175,6 +177,48 @@ int cmd_radio_registry(const Args& a) {
   return finish(false, "nodev", {});
 }
 
+int cmd_watcher(const Args& a) {
+  uint32_t duration = num(a, "--duration-ms", 8000);
+  std::string expect_name = str(a, "--expect-name");
+  try {
+    Windows::Devices::Bluetooth::Advertisement::BluetoothLEAdvertisementWatcher watcher;
+    watcher.ScanningMode(
+        Windows::Devices::Bluetooth::Advertisement::BluetoothLEScanningMode::Active);
+    std::mutex mx;
+    std::vector<std::pair<uint64_t, std::string>> seen;
+    std::atomic<bool> matched{false};
+    watcher.Received([&](auto const&, auto const& args) {
+      auto adv = args.Advertisement();
+      std::string name = winrt::to_string(adv.LocalName());
+      uint64_t addr = args.BluetoothAddress();
+      {
+        std::lock_guard<std::mutex> lk(mx);
+        seen.emplace_back(addr, name);
+      }
+      if (!expect_name.empty() && name.find(expect_name) != std::string::npos) matched = true;
+    });
+    watcher.Start();
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(duration);
+    while (std::chrono::steady_clock::now() < deadline) {
+      if (!expect_name.empty() && matched.load()) break;
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    watcher.Stop();
+    std::lock_guard<std::mutex> lk(mx);
+    if (!expect_name.empty() && !matched.load()) return finish(false, "noname", {});
+    if (seen.empty()) return finish(false, "noseen", {});
+    std::vector<std::string> reports;
+    for (auto& [addr, name] : seen) {
+      char buf[64];
+      std::snprintf(buf, sizeof(buf), "%012llX %s", (unsigned long long)addr, name.c_str());
+      reports.push_back(buf);
+    }
+    return finish(true, "", reports);
+  } catch (const winrt::hresult_error& e) {
+    return finish(false, winrt::to_string(e.message()), {});
+  }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -188,6 +232,7 @@ int main(int argc, char** argv) {
     if (mode == "hid") return cmd_hid(a);
     if (mode == "radio") return cmd_radio_winrt(a);
     if (mode == "radio-registry") return cmd_radio_registry(a);
+    if (mode == "watcher") return cmd_watcher(a);
     std::fprintf(stderr, "winrt-probe: mode '%s' not implemented yet\n", mode.c_str());
     return 3;
   } catch (const std::exception& e) {

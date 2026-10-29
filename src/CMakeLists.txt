@@ -16,6 +16,7 @@ add_library(phantom_core STATIC
   hci/packets.h
   hci/controller.cpp
   hci/le_air.cpp
+  ble/ble_device.cpp
   bluetooth/adapter_model.cpp
 )
 

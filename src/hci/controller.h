@@ -1,6 +1,6 @@
 #pragma once
 // MiniController：自研精简 HCI 控制器引擎（进程内，无真实射频）
-// M1：初始化命令子集；M2/M3 扩展 LE 空口与链路（le_air/link）
+// M1：初始化命令子集；M2：LE 空口（扫描/广播/连接）；M3：链路数据面
 #include <array>
 #include <cstdint>
 #include <deque>
@@ -9,11 +9,10 @@
 #include <string>
 #include <vector>
 
+#include "hci/le_air.h"
 #include "hci/packets.h"
 
 namespace pb::hci {
-
-class VirtualAir;  // M2 前置声明
 
 struct ControllerConfig {
   std::array<uint8_t, 6> bd_addr = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66};  // LSB first
@@ -52,9 +51,13 @@ class MiniController {
   bool le_scan_active() const { return le_scan_active_; }
 
   // —— M2 空口接入 ——
-  void attach_air(VirtualAir* air) { air_ = air; }
-  void tick(uint64_t now_ms);             // 定时驱动（空口广播/延迟事件）
+  VirtualAir& air() { return air_; }      // 控制器自有空口（广播源注册于此）
+  void tick(uint64_t now_ms);             // 定时驱动（空口广播/连接延迟事件）
   void tick_for_tests(uint64_t now_ms) { tick(now_ms); }
+  bool has_connection() const { return conn_handle_ != 0; }
+  uint16_t connection_handle() const { return conn_handle_; }
+  uint64_t connection_peer() const { return conn_peer_; }
+  void simulate_disconnect(uint8_t reason);  // 断开当前连接（设备侧/测试触发）
 
  private:
   struct Impl;
@@ -72,9 +75,17 @@ class MiniController {
   uint8_t scan_enable_ = 0;
   bool le_scan_enabled_ = false;
   bool le_scan_active_ = false;
-  VirtualAir* air_ = nullptr;
+  VirtualAir air_;            // 自有虚拟空口
   std::string local_name_stored_;
   std::array<uint8_t, 8> eir_{};
+  // 连接创建延迟状态
+  bool conn_pending_ = false;
+  uint64_t conn_pending_peer_ = 0;
+  uint8_t conn_pending_type_ = 0;
+  uint64_t conn_fire_at_ = 0;
+  uint16_t conn_handle_ = 0;
+  uint16_t next_handle_ = 0x0001;
+  uint64_t conn_peer_ = 0;
 };
 
 // 命令位图中的位序：Supported Commands 表 pos = (ogf-1)*64 + (ocf & 0x3F)

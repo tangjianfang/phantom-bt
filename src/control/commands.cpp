@@ -30,6 +30,15 @@ std::vector<std::string> execute(sim::Simulator& sim, const std::string& line) {
     if (cmd == "load-bt") {
       return {"OK " + sim.cmd_load_bt_adapter()};
     }
+    if (cmd == "ble-advertise" && args.size() == 2) {
+      return {sim.cmd_ble_advertise(args[1])};
+    }
+    if (cmd == "ble-stop" && args.size() == 2) {
+      return {"OK " + sim.cmd_ble_stop(args[1])};
+    }
+    if (cmd == "ble-list") {
+      return {"OK", sim.cmd_ble_list(), "OK-END"};
+    }
     if (cmd == "list") {
       std::vector<std::string> out;
       std::string l = sim.cmd_list();

@@ -30,8 +30,9 @@ BOOL WINAPI ctrl_handler(DWORD type) {
   return FALSE;
 }
 
-int run_serve(const std::vector<std::string>& loads, bool load_bt, bool attach,
-              const std::string& probe, int exit_after_ms, uint16_t port) {
+int run_serve(const std::vector<std::string>& loads, bool load_bt,
+              const std::vector<std::string>& bles, bool attach, const std::string& probe,
+              int exit_after_ms, uint16_t port) {
   pb::sim::Simulator sim;
   std::string err;
   if (!sim.start(&err, port)) {
@@ -55,6 +56,15 @@ int run_serve(const std::vector<std::string>& loads, bool load_bt, bool attach,
       busids.push_back(sim.cmd_load_bt_adapter());
     } catch (const std::exception& e) {
       std::fprintf(stderr, "load-bt: %s\n", e.what());
+      sim.stop();
+      return 1;
+    }
+  }
+  for (auto& b : bles) {
+    try {
+      sim.cmd_ble_advertise(b);
+    } catch (const std::exception& e) {
+      std::fprintf(stderr, "ble %s: %s\n", b.c_str(), e.what());
       sim.stop();
       return 1;
     }
@@ -204,6 +214,7 @@ int main(int argc, char** argv) {
   if (cmd == "serve") {
     uint16_t port = 3240;
     std::vector<std::string> loads;
+    std::vector<std::string> bles;
     bool load_bt = false, attach = false;
     std::string probe;
     int exit_after = 0;
@@ -213,6 +224,7 @@ int main(int argc, char** argv) {
       if (a == "--port") port = (uint16_t)std::stoi(next());
       else if (a == "--load") loads.push_back(next());
       else if (a == "--load-bt") load_bt = true;
+      else if (a == "--ble") bles.push_back(next());
       else if (a == "--attach") attach = true;
       else if (a == "--probe") probe = next();
       else if (a == "--exit-after-ms") exit_after = std::stoi(next());
@@ -221,7 +233,7 @@ int main(int argc, char** argv) {
         return 2;
       }
     }
-    return run_serve(loads, load_bt, attach, probe, exit_after, port);
+    return run_serve(loads, load_bt, bles, attach, probe, exit_after, port);
   }
 
   std::fprintf(stderr, "unknown command %s\n", cmd.c_str());

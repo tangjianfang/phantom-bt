@@ -9,6 +9,8 @@ namespace pb::hci {
 
 namespace {
 
+constexpr uint16_t kConnDelayTicks = 13;  // tick(16ms) × 13 ≈ 208ms 连接建立延迟
+
 // 常用命令命名（日志用；不要求全覆盖）
 const std::unordered_map<uint16_t, const char*>& command_names() {
   static const std::unordered_map<uint16_t, const char*> m = {
@@ -322,7 +324,10 @@ void MiniController::handle_command(const uint8_t* p, size_t n) {
       break;
     case CMD_LE_SET_SCAN_ENABLE: {
       // params: enable, filter_dup
-      if (qn >= 1) le_scan_enabled_ = q[0] != 0;
+      if (qn >= 1) {
+        le_scan_enabled_ = q[0] != 0;
+        air_.set_host_scanning(le_scan_enabled_, le_scan_active_);
+      }
       break;
     }
     case CMD_READ_SCAN_ENABLE:
@@ -410,6 +415,22 @@ void MiniController::handle_command(const uint8_t* p, size_t n) {
   if (cmd.op == CMD_LE_CREATE_CONNECTION || cmd.op == CMD_LE_CREATE_CONNECTION_CANCEL ||
       cmd.op == CMD_CMD_DISCONNECT || cmd.op == CMD_LE_READ_REMOTE_FEATURES ||
       cmd.op == CMD_LE_READ_CHANNEL_MAP || cmd.op == CMD_LE_CONNECTION_UPDATE) {
+    if (cmd.op == CMD_LE_CREATE_CONNECTION) {
+      // params: scan_int(2) scan_win(2) filter(1) peer_type(1) peer_addr(6) ...
+      if (qn >= 12) {
+        std::lock_guard<std::mutex> lk(mx_);
+        if (!conn_pending_ && conn_handle_ == 0) {
+          conn_pending_ = true;
+          conn_pending_type_ = q[5];
+          conn_pending_peer_ = 0;
+          for (int i = 0; i < 6; ++i) conn_pending_peer_ |= ((uint64_t)q[6 + i]) << (8 * i);
+          conn_fire_at_ = kConnDelayTicks;
+        }
+      }
+    } else if (cmd.op == CMD_LE_CREATE_CONNECTION_CANCEL) {
+      std::lock_guard<std::mutex> lk(mx_);
+      conn_pending_ = false;  // 幂等取消
+    }
     std::vector<uint8_t> evt = build_command_status(ST_SUCCESS, 1, cmd.op);
     {
       std::lock_guard<std::mutex> lk(mx_);
@@ -441,8 +462,52 @@ void MiniController::handle_command(const uint8_t* p, size_t n) {
   }
 }
 
-void MiniController::tick(uint64_t) {
-  // M2：空口广播与连接延迟事件在此驱动
+void MiniController::tick(uint64_t now_ms) {
+  // 1) 空口：扫描中 → 广播报告事件
+  if (le_scan_enabled_ || air_.scanning()) {
+    air_.tick(now_ms, [this](std::vector<uint8_t> evt) { push_event(evt); });
+  }
+  // 2) 连接创建延迟
+  std::lock_guard<std::mutex> lk(mx_);
+  if (conn_pending_) {
+    if (conn_fire_at_ > 0) {
+      --conn_fire_at_;  // tick 计数（16ms 基 ×13 ≈ 208ms）—— 简化用计数器
+    } else {
+      conn_pending_ = false;
+      auto dev = air_.find_connectable(conn_pending_peer_);
+      uint8_t status = dev ? ST_SUCCESS : ST_UNKNOWN_CONN_ID;
+      std::vector<uint8_t> p;
+      p.push_back(status);
+      p.push_back(next_handle_ & 0xFF);
+      p.push_back(next_handle_ >> 8);
+      p.push_back(0x00);  // role = central
+      p.push_back(conn_pending_type_);
+      for (int i = 0; i < 6; ++i) p.push_back((conn_pending_peer_ >> (8 * i)) & 0xFF);
+      p.push_back(0x18); p.push_back(0x00);  // interval 30ms
+      p.push_back(0x00); p.push_back(0x00);  // latency 0
+      p.push_back(0x48); p.push_back(0x00);  // timeout 720ms
+      p.push_back(0x0C);                     // master clock accuracy
+      auto evt = build_le_meta(LE_EVT_CONNECTION_COMPLETE, p);
+      event_q_.push_back(evt);
+      ++event_count_;
+      if (status == ST_SUCCESS) {
+        conn_handle_ = next_handle_++;
+        conn_peer_ = conn_pending_peer_;
+      }
+    }
+  }
+}
+
+void MiniController::simulate_disconnect(uint8_t reason) {
+  std::lock_guard<std::mutex> lk(mx_);
+  if (conn_handle_ == 0) return;
+  uint16_t h = conn_handle_;
+  conn_handle_ = 0;
+  conn_peer_ = 0;
+  // Disconnection_Complete: status, handle(2), reason
+  std::vector<uint8_t> p{ST_SUCCESS, (uint8_t)(h & 0xFF), (uint8_t)(h >> 8), reason};
+  event_q_.push_back(build_event(EVT_DISCONNECTION_COMPLETE, p));
+  ++event_count_;
 }
 
 }  // namespace pb::hci

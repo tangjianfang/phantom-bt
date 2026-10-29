@@ -9,6 +9,7 @@
 #include "core/log.h"
 #include "core/net.h"
 #include "bluetooth/adapter_model.h"
+#include "ble/ble_device.h"
 #include "hid/hid_model.h"
 #include "hid/profiles.h"
 
@@ -20,6 +21,13 @@ struct Simulator::Impl {
   uint32_t next_devnum = 1;
   std::map<std::string, std::shared_ptr<hid::HidModel>> hid_models;  // busid → hid 模型
   std::map<std::string, std::shared_ptr<bt::AdapterModel>> bt_models;
+  // BLE 虚拟设备（挂在首个 bt 适配器的空口上）
+  std::map<uint64_t, ble::BleDeviceDef> ble_devices;
+  std::thread tick_thread;
+  std::atomic<bool> ticking{false};
+  bt::AdapterModel* adapter_for_ble() {
+    return bt_models.empty() ? nullptr : bt_models.begin()->second.get();
+  }
 };
 
 Simulator::Simulator() : impl_(std::make_unique<Impl>()) {}
@@ -32,6 +40,15 @@ bool Simulator::start(std::string* err, uint16_t want_port) {
     impl_->server = std::make_unique<usbip::Server>(impl_->reg, p);
     if (impl_->server->start(err)) {
       port_ = impl_->server->port();
+      impl_->ticking = true;
+      impl_->tick_thread = std::thread([this] {
+        uint64_t t = 0;
+        while (impl_->ticking.load()) {
+          if (auto* ad = impl_->adapter_for_ble()) ad->controller().tick(t);
+          Sleep(16);
+          t += 16;
+        }
+      });
       return true;
     }
     PB_LOG_WARN("usbip: port " + std::to_string(p) + " unavailable: " + (err ? *err : "?"));
@@ -40,10 +57,42 @@ bool Simulator::start(std::string* err, uint16_t want_port) {
 }
 
 void Simulator::stop() {
+  if (impl_->ticking.exchange(false) && impl_->tick_thread.joinable()) impl_->tick_thread.join();
   if (impl_->server) {
     impl_->server->stop();
     impl_->server.reset();
   }
+}
+
+std::string Simulator::cmd_ble_advertise(const std::string& json_path) {
+  auto* ad = impl_->adapter_for_ble();
+  if (!ad) throw std::runtime_error("no bt adapter loaded (run load-bt first)");
+  auto def = ble::BleDeviceDef::load_file(json_path);
+  auto adv = std::make_shared<hci::VirtualAdvertiser>(def.address, def.name, def.connectable);
+  adv->set_adv_data_name(def.name);
+  adv->set_scan_response(def.name);
+  ad->controller().air().add(std::move(adv));
+  impl_->ble_devices[def.address] = def;
+  PB_LOG_INFO("sim: ble advertising '" + def.name + "' @ " + ble::BleDeviceDef::format_address(def.address));
+  return "OK " + ble::BleDeviceDef::format_address(def.address);
+}
+
+std::string Simulator::cmd_ble_stop(const std::string& addr_hex) {
+  auto* ad = impl_->adapter_for_ble();
+  if (!ad) throw std::runtime_error("no bt adapter loaded");
+  uint64_t addr = ble::BleDeviceDef::parse_address(addr_hex);
+  ad->controller().air().remove(addr);
+  impl_->ble_devices.erase(addr);
+  return "stopped";
+}
+
+std::string Simulator::cmd_ble_list() {
+  std::string out;
+  for (auto& [addr, def] : impl_->ble_devices) {
+    if (!out.empty()) out += "\n";
+    out += ble::BleDeviceDef::format_address(addr) + " " + def.kind + " " + def.name;
+  }
+  return out;
 }
 
 std::string Simulator::cmd_load_hid_profile(const std::string& json_path) {
