@@ -4,6 +4,7 @@ add_executable(phantombt-tests
   unit/test_bytes.cpp
   unit/test_log.cpp
   unit/test_net.cpp
+  unit/test_json.cpp
 )
 target_link_libraries(phantombt-tests PRIVATE phantom_core)
 target_compile_definitions(phantombt-tests PRIVATE PB_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
