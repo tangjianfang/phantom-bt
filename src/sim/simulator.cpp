@@ -7,6 +7,7 @@
 
 #include "core/bytes.h"
 #include "core/log.h"
+#include "core/net.h"
 #include "hid/hid_model.h"
 #include "hid/profiles.h"
 
@@ -23,7 +24,9 @@ Simulator::Simulator() : impl_(std::make_unique<Impl>()) {}
 Simulator::~Simulator() { stop(); }
 
 bool Simulator::start(std::string* err, uint16_t want_port) {
-  for (uint16_t p = want_port; p < want_port + 10; ++p) {
+  static net::WsaSession wsa_once;  // 进程级 Winsock 初始化（引用计数安全）
+  uint16_t last = want_port == 0 ? 0 : want_port + 9;
+  for (uint16_t p = want_port; p <= last; ++p) {
     impl_->server = std::make_unique<usbip::Server>(impl_->reg, p);
     if (impl_->server->start(err)) {
       port_ = impl_->server->port();
