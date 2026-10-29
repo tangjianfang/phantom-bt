@@ -14,6 +14,7 @@ add_library(phantom_core STATIC
   sim/simulator.cpp
   control/commands.cpp
   hci/packets.h
+  hci/controller.cpp
 )
 
 add_executable(phantombt cli/main.cpp)
