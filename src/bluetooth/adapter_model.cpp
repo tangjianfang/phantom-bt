@@ -1,5 +1,7 @@
 #include "bluetooth/adapter_model.h"
 
+#include <cstdio>
+
 #include "usb/descriptors.h"
 
 namespace pb::bt {

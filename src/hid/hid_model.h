@@ -1,9 +1,12 @@
 #pragma once
 // USB HID 设备模型：标准+HID 类控制请求、中断 IN/OUT 报告通道
+// 线程模型：on_in/on_out/on_control 由 usbip 连接线程调用；inject_input_report/
+// pop_output_report 由控制/命令线程调用 → 全部状态置于互斥锁保护下
 #include <cstdint>
-#include <memory>
-#include <optional>
 #include <deque>
+#include <memory>
+#include <mutex>
+#include <optional>
 #include <vector>
 
 #include "hid/profiles.h"
@@ -37,6 +40,7 @@ class HidModel : public pb::usb::IUsbDeviceModel {
   bool stalled_recently = false;
 
  private:
+  mutable std::mutex mx_;  // 保护下列所有可变状态（跨线程访问）
   HidProfile profile_;
   pb::usbip::ExportedDevice exported_;
   pb::usb::DescriptorStore store_;

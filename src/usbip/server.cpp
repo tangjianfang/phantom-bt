@@ -172,17 +172,14 @@ void Server::Impl::handle_connection(net::TcpConn conn) {
 
   // 清理
   std::shared_ptr<pb::usb::IUsbDeviceModel> model;
-  ConnSink* sink = nullptr;
   {
     std::lock_guard<std::mutex> lk(ctx.mx);
     model = ctx.model;
     ctx.model = nullptr;
-    sink = ctx.sink;
-    ctx.sink = nullptr;
+    ctx.sink = nullptr;  // 刻意不 delete：complete_in 可能仍在其他线程执行（进程生命周期内少量泄漏）
     ctx.pending_ins.clear();
     ctx.detached = true;
   }
-  delete sink;
   if (model) model->on_detach();
   {
     std::lock_guard<std::mutex> lk(conns_mx);

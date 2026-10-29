@@ -60,17 +60,20 @@ HidModel::HidModel(const HidProfile& p, uint32_t busnum, uint32_t devnum) : prof
 HidModel::~HidModel() = default;
 
 const pb::usbip::ExportedDevice& HidModel::exported() const { return exported_; }
-void HidModel::attach_sink(pb::usb::IUsbModelSink* s) { sink_ = s; }
+
+void HidModel::attach_sink(pb::usb::IUsbModelSink* s) {
+  std::lock_guard<std::mutex> lk(mx_);
+  sink_ = s;
+}
 
 const std::vector<uint8_t>& HidModel::report_descriptor() const { return store_.report_descriptor; }
 
 std::vector<uint8_t> HidModel::on_control(const pb::usb::ControlSetup& s,
                                           const std::vector<uint8_t>& data) {
-  // 标准请求先走通用分发
+  // 标准请求先走通用分发（只读 store_，无锁安全）
   std::vector<uint8_t> out;
   if (pb::usb::descriptor_request(s, store_, out)) return out;
 
-  stalled_recently = false;
   uint8_t type = s.bmRequestType & 0x60;
   uint8_t recipient = s.bmRequestType & 0x1F;
   bool direction_in = s.bmRequestType & 0x80;
@@ -83,19 +86,20 @@ std::vector<uint8_t> HidModel::on_control(const pb::usb::ControlSetup& s,
     return out;
   }
 
+  std::lock_guard<std::mutex> lk(mx_);
   if (type == 0x20) {  // 类请求（接口接收者）
     switch (s.bRequest) {
       case 0x01: {  // GET_REPORT
         if (!direction_in) break;
         std::vector<uint8_t> r = last_input_report_;
-        if (r.empty()) r.assign(store_.report_descriptor.empty() ? 8 : 8, 0);
+        if (r.empty()) r.assign(8, 0);
         if (r.size() > s.wLength) r.resize(s.wLength);
         return r;
       }
       case 0x02:  // GET_IDLE
         if (!direction_in) break;
         return {idle_4ms_};
-      case 0x03:  // GET_PROTOCOL（仅 boot 设备有意义，统一支持）
+      case 0x03:  // GET_PROTOCOL
         if (!direction_in) break;
         return {protocol_};
       case 0x09:  // SET_REPORT（输出报告经控制端点）
@@ -118,14 +122,15 @@ std::vector<uint8_t> HidModel::on_control(const pb::usb::ControlSetup& s,
 }
 
 void HidModel::on_out(uint8_t ep, std::vector<uint8_t> data) {
-  if (ep == 0x01) {  // INT OUT → 输出报告
-    output_queue_.push_back(std::move(data));
-    if (output_queue_.size() > kQueueCap) output_queue_.pop_front();
-  }
+  if (ep != 0x01) return;
+  std::lock_guard<std::mutex> lk(mx_);
+  output_queue_.push_back(std::move(data));
+  if (output_queue_.size() > kQueueCap) output_queue_.pop_front();
 }
 
 void HidModel::on_in(uint8_t ep) {
   if (ep != 0x81) return;
+  std::lock_guard<std::mutex> lk(mx_);
   if (!input_queue_.empty()) {
     auto r = std::move(input_queue_.front());
     input_queue_.pop_front();
@@ -137,6 +142,7 @@ void HidModel::on_in(uint8_t ep) {
 }
 
 void HidModel::inject_input_report(std::vector<uint8_t> report) {
+  std::lock_guard<std::mutex> lk(mx_);
   if (pending_in_ && sink_) {
     pending_in_ = false;
     last_input_report_ = report;
@@ -151,6 +157,7 @@ void HidModel::inject_input_report(std::vector<uint8_t> report) {
 }
 
 std::optional<std::vector<uint8_t>> HidModel::pop_output_report() {
+  std::lock_guard<std::mutex> lk(mx_);
   if (output_queue_.empty()) return std::nullopt;
   auto r = std::move(output_queue_.front());
   output_queue_.pop_front();
@@ -158,6 +165,10 @@ std::optional<std::vector<uint8_t>> HidModel::pop_output_report() {
 }
 
 void HidModel::on_stall_clear(uint8_t) { stalled_recently = false; }
-void HidModel::on_detach() { pending_in_ = false; }
+
+void HidModel::on_detach() {
+  std::lock_guard<std::mutex> lk(mx_);
+  pending_in_ = false;
+}
 
 }  // namespace pb::hid

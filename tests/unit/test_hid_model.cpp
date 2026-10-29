@@ -9,6 +9,7 @@
 using namespace pb;
 using namespace pb::hid;
 
+namespace {  // 匿名命名空间：避免与其他 TU 的同名结构体 ODR 合并
 struct FakeSink final : pb::usb::IUsbModelSink {
   int completes = 0, stalls = 0;
   std::vector<std::vector<uint8_t>> data;
@@ -18,6 +19,7 @@ struct FakeSink final : pb::usb::IUsbModelSink {
   }
   void stall_ep(uint8_t) override { ++stalls; }
 };
+}  // namespace
 
 static std::unique_ptr<HidModel> make_vendor_model(FakeSink* sink) {
   auto prof = HidProfile::from_json(json::parse(

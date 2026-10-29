@@ -2,12 +2,14 @@
 #include "bluetooth/adapter_model.h"
 
 #include <array>
+#include <cstdio>
 
 #include "core/bytes.h"
 
 using namespace pb;
 using namespace pb::bt;
 
+namespace {  // 匿名命名空间：防止与其他测试 TU 的同名结构体 ODR 合并（inline 成员被 COMDAT 折叠）
 struct FakeSink final : pb::usb::IUsbModelSink {
   int completes = 0;
   std::vector<std::pair<uint8_t, std::vector<uint8_t>>> data;
@@ -17,6 +19,7 @@ struct FakeSink final : pb::usb::IUsbModelSink {
   }
   void stall_ep(uint8_t) override {}
 };
+}  // namespace
 
 static std::array<uint8_t, 8> su8(uint8_t bm, uint8_t br, uint16_t wv, uint16_t wi, uint16_t wl) {
   return {bm, br, (uint8_t)(wv & 0xFF), (uint8_t)(wv >> 8), (uint8_t)(wi & 0xFF), (uint8_t)(wi >> 8),
