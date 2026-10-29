@@ -59,33 +59,41 @@ void VirtualAdvertiser::set_scan_response(std::string_view name) {
 }
 
 void VirtualAir::add(std::shared_ptr<VirtualAdvertiser> adv) {
+  std::lock_guard<std::mutex> lk(mx_);
   advs_.push_back(std::move(adv));
 }
 
 void VirtualAir::remove(uint64_t addr) {
+  std::lock_guard<std::mutex> lk(mx_);
   advs_.erase(std::remove_if(advs_.begin(), advs_.end(),
                              [addr](auto& a) { return a->address() == addr; }),
               advs_.end());
 }
 
 void VirtualAir::set_host_scanning(bool enabled, bool active) {
+  std::lock_guard<std::mutex> lk(mx_);
   scanning_ = enabled;
   active_ = active;
 }
 
 std::shared_ptr<VirtualAdvertiser> VirtualAir::find_connectable(uint64_t addr) {
+  std::lock_guard<std::mutex> lk(mx_);
   for (auto& a : advs_)
     if (a->address() == addr && a->connectable()) return a;
   return nullptr;
 }
 
 std::shared_ptr<VirtualAdvertiser> VirtualAir::find_any(uint64_t addr) {
+  std::lock_guard<std::mutex> lk(mx_);
   for (auto& a : advs_)
     if (a->address() == addr) return a;
   return nullptr;
 }
 
-std::vector<std::shared_ptr<VirtualAdvertiser>> VirtualAir::devices() const { return advs_; }
+std::vector<std::shared_ptr<VirtualAdvertiser>> VirtualAir::devices() const {
+  std::lock_guard<std::mutex> lk(mx_);
+  return advs_;
+}
 
 std::vector<uint8_t> build_adv_report_event(uint8_t evt_type, uint8_t addr_type, uint64_t addr,
                                             const uint8_t* data, uint8_t data_len, int8_t rssi) {
@@ -102,6 +110,7 @@ std::vector<uint8_t> build_adv_report_event(uint8_t evt_type, uint8_t addr_type,
 }
 
 void VirtualAir::tick(uint64_t now_ms, std::function<void(std::vector<uint8_t>)> emit) {
+  std::lock_guard<std::mutex> lk(mx_);
   if (!scanning_) {
     last_tick_.assign(advs_.size(), kNever);
     return;

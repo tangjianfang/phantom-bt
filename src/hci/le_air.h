@@ -1,9 +1,11 @@
 #pragma once
 // VirtualAir：虚拟 BLE 空口（内存队列），承载广播源与连接查找
+// 线程模型：add/remove/set_host_scanning（命令线程）与 tick（定时线程）并发 → 互斥保护
 #include <array>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -55,6 +57,7 @@ class VirtualAir {
   bool active_scan() const { return active_; }
 
  private:
+  mutable std::mutex mx_;
   std::vector<std::shared_ptr<VirtualAdvertiser>> advs_;
   bool scanning_ = false;
   bool active_ = false;
