@@ -1,0 +1,5 @@
+build/
+build.log
+*.user
+.vs/
+integration-results/

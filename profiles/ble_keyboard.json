@@ -1,0 +1,7 @@
+{
+  "kind": "keyboard",
+  "name": "PhantomKb",
+  "address": "C0:11:22:33:44:55",
+  "connectable": true,
+  "hid_map": "boot_keyboard"
+}

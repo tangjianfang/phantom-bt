@@ -1,0 +1,6 @@
+{
+  "kind": "beacon",
+  "name": "PhantomBeacon",
+  "address": "C0:AA:BB:CC:DD:EE",
+  "connectable": false
+}
