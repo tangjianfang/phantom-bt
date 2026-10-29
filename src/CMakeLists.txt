@@ -6,6 +6,8 @@ add_library(phantom_core STATIC
   usbip/protocol.cpp
   usb/descriptors.cpp
   usb/control.cpp
+  hid/report_descriptor.cpp
+  hid/profiles.cpp
 )
 target_link_libraries(phantom_core PUBLIC ws2_32)
 target_include_directories(phantom_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

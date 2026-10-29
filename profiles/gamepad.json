@@ -1,0 +1,7 @@
+{
+  "template": "gamepad",
+  "vid": "0x1209",
+  "pid": "0xB007",
+  "product": "Phantom Gamepad",
+  "serial": "PG-0001"
+}
