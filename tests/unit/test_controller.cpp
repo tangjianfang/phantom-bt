@@ -95,9 +95,9 @@ PB_TEST(controller_supported_commands_bitmap_has_supported) {
   // LE_Set_Scan_Enable (ogf8, ocf0x0C): pos=7*64+12=460 → octet 57
   pos = supported_commands_bit(CMD_LE_SET_SCAN_ENABLE);
   PB_CHECK(e[6 + pos / 8] & (1 << (pos % 8)));
-  // Vendor (ogf0x3F) 不在表内
+  // Vendor (ogf0x3F) 位序超出 64 字节表（仅 OGF 1..8），不可表示
   pos = supported_commands_bit(0xFC00);
-  PB_CHECK(!(e[6 + pos / 8] & (1 << (pos % 8))));
+  PB_CHECK(pos / 8 >= 64u);
 }
 
 PB_TEST(controller_features_flags) {
