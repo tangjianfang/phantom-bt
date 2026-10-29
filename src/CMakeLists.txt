@@ -25,6 +25,7 @@ add_library(phantom_core STATIC
   ble/l2cap.cpp
   ble/aes.cpp
   ble/smp.cpp
+  ble/device_stack.cpp
   bluetooth/adapter_model.cpp
 )
 
