@@ -16,6 +16,7 @@ PipeServer::~PipeServer() { stop(); }
 bool PipeServer::start(std::string* err, const std::string& name) {
   // 单实例监听管道：每次连接断开后重建（简化模型）
   running_ = true;
+  pipe_name_ = name;
   threads_.emplace_back([this, name] {
     while (running_.load()) {
       HANDLE pipe = CreateNamedPipeA(name.c_str(), PIPE_ACCESS_DUPLEX,
@@ -43,11 +44,15 @@ bool PipeServer::start(std::string* err, const std::string& name) {
 
 void PipeServer::stop() {
   if (!running_.exchange(false)) return;
-  // 打开一个连接以解除监听线程阻塞
-  HANDLE wake = CreateFileA("\\\\.\\pipe\\phantom-bt", GENERIC_READ | GENERIC_WRITE, 0, nullptr,
-                            OPEN_EXISTING, 0, nullptr);
-  if (wake != INVALID_HANDLE_VALUE) {
-    CloseHandle(wake);
+  // 唤醒监听线程：与其 CreateNamedPipe 的间隙竞态 → 短重试确保送达
+  for (int i = 0; i < 20; ++i) {
+    HANDLE wake = CreateFileA(pipe_name_.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                              OPEN_EXISTING, 0, nullptr);
+    if (wake != INVALID_HANDLE_VALUE) {
+      CloseHandle(wake);
+      break;
+    }
+    Sleep(100);
   }
   for (auto& t : threads_)
     if (t.joinable()) t.join();

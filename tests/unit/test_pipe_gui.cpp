@@ -12,13 +12,13 @@ PB_TEST(pipe_roundtrip_status) {
   std::string err;
   PB_CHECK(sim.start(&err, 0));
   control::PipeServer pipe(sim);
-  PB_CHECK(pipe.start(&err));
+  PB_CHECK(pipe.start(&err, "\\\\.\\pipe\\phantom-bt-a"));
 
   std::vector<std::string> replies;
-  bool ok = control::CommandClient::send_line("\\\\.\\pipe\\phantom-bt", "status", replies, 3000);
+  bool ok = control::CommandClient::send_line("\\\\.\\pipe\\phantom-bt-a", "status", replies, 3000);
   PB_CHECK(ok);
   PB_CHECK(!replies.empty());
-  PB_CHECK(replies[0].rfind("OK usbip-port=", 0) == 0);
+  if (!replies.empty()) PB_CHECK(replies[0].rfind("OK usbip-port=", 0) == 0);
 
   pipe.stop();
   sim.stop();
@@ -29,19 +29,21 @@ PB_TEST(pipe_roundtrip_load_and_list) {
   std::string err;
   PB_CHECK(sim.start(&err, 0));
   control::PipeServer pipe(sim);
-  PB_CHECK(pipe.start(&err));
+  PB_CHECK(pipe.start(&err, "\\\\.\\pipe\\phantom-bt-b"));
 
   std::vector<std::string> r1;
-  PB_CHECK(control::CommandClient::send_line("\\\\.\\pipe\\phantom-bt", "load-hid profiles/vendor.json", r1));
+  PB_CHECK(control::CommandClient::send_line("\\\\.\\pipe\\phantom-bt-b", "load-hid profiles/vendor.json", r1));
+  if (r1.empty()) return;  // 环境故障时防越界（PB_CHECK 已记录失败）
   PB_CHECK_EQ(r1[0], std::string("OK 7-1"));
 
   std::vector<std::string> r2;
-  PB_CHECK(control::CommandClient::send_line("\\\\.\\pipe\\phantom-bt", "list", r2));
+  PB_CHECK(control::CommandClient::send_line("\\\\.\\pipe\\phantom-bt-b", "list", r2));
+  if (r2.empty()) return;
   PB_CHECK_EQ(r2.back(), std::string("OK-END"));
 
   std::vector<std::string> r3;
-  PB_CHECK(control::CommandClient::send_line("\\\\.\\pipe\\phantom-bt", "bogus", r3));
-  PB_CHECK(r3[0].rfind("ERR", 0) == 0);
+  PB_CHECK(control::CommandClient::send_line("\\\\.\\pipe\\phantom-bt-b", "bogus", r3));
+  if (!r3.empty()) PB_CHECK(r3[0].rfind("ERR", 0) == 0);
 
   pipe.stop();
   sim.stop();

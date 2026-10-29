@@ -23,7 +23,7 @@ class PipeServer {
   sim::Simulator& sim_;
   std::atomic<bool> running_{false};
   std::vector<std::thread> threads_;
-  void* listen_pipe_ = nullptr;
+  std::string pipe_name_ = "\\\\.\\pipe\\phantom-bt";
 };
 
 // 管道客户端（GUI 客户端模式 / 远程 CLI）

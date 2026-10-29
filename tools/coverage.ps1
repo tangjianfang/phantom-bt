@@ -15,10 +15,11 @@ if (-not $occ) {
 if ($LASTEXITCODE -ne 0) { Write-Error "build failed"; exit 1 }
 $exe = "$root/build/$($Config.ToLower())/tests/phantombt-tests.exe"
 New-Item -ItemType Directory -Force -Path "$root/integration-results/coverage" | Out-Null
-& $occ --sources "$root/src" `
-  --excluded_sources "$root/src/gui" `
-  --excluded_sources "$root/src/probes" `
-  --excluded_sources "$root/src/cli" `
-  --export_type html:"$root/integration-results/coverage" `
-  -- "$exe"
+$rootWin = $root -replace '/', '\'
+& $occ --sources "$rootWin\src" `
+  --excluded_sources "$rootWin\src\gui" `
+  --excluded_sources "$rootWin\src\probes" `
+  --excluded_sources "$rootWin\src\cli" `
+  --export_type html:"$rootWin\integration-results\coverage" `
+  -- "$rootWin\build\debug\tests\phantombt-tests.exe"
 exit $LASTEXITCODE
