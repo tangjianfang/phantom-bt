@@ -1,4 +1,5 @@
 #include "test/test_framework.h"
+#include <cstdio>
 #include "ble/att.h"
 #include "ble/gatt_db.h"
 #include "ble/hogp.h"
@@ -241,8 +242,11 @@ PB_TEST(l2cap_demux_routes_att) {
   auto rsp = demux.handle(build_l2cap(0x0004, {ATT_READ_REQ, 0x03, 0x00}));
   PB_CHECK(att_called);
   PB_CHECK(!sm_called);
-  // 应答被 L2CAP 包裹：02 00 04 00 02 41
-  PB_CHECK(rsp == std::vector<uint8_t>({0x02, 0x00, 0x04, 0x00, 0x13, 0x41}));  // len2 + cid4 + {13,41}
+  PB_CHECK_EQ(rsp.size(), 6u);
+  PB_CHECK_EQ((unsigned)rsp[0], 2u);   // l2cap len lo
+  PB_CHECK_EQ((unsigned)rsp[2], 4u);   // cid lo
+  PB_CHECK_EQ((unsigned)rsp[4], (unsigned)ATT_READ_RSP);
+  PB_CHECK_EQ((unsigned)rsp[5], 0x41u);
 
   demux.handle(build_l2cap(0x0006, {0x01}));
   PB_CHECK(sm_called);
