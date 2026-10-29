@@ -4,12 +4,14 @@
 #include <array>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
 
 #include "hci/le_air.h"
+#include "hci/link.h"
 #include "hci/packets.h"
 
 namespace pb::hci {
@@ -59,6 +61,12 @@ class MiniController {
   uint64_t connection_peer() const { return conn_peer_; }
   void simulate_disconnect(uint8_t reason);  // 断开当前连接（设备侧/测试触发）
 
+  // —— M3 链路数据面 ——
+  // 主机方向完整 L2CAP PDU 回调（ATT CID 0x0004 / SM 0x0006 由上层分发）
+  std::function<void(uint16_t handle, const std::vector<uint8_t>& pdu)> on_l2cap_from_host;
+  // 设备侧发送完整 L2CAP PDU → ACL 切片入队（BULK IN 侧取走）
+  void send_l2cap(uint16_t handle, const std::vector<uint8_t>& pdu);
+
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
@@ -76,6 +84,9 @@ class MiniController {
   bool le_scan_enabled_ = false;
   bool le_scan_active_ = false;
   VirtualAir air_;            // 自有虚拟空口
+  LinkTable links_;           // M3：连接句柄表
+  AclReassembler reasm_;      // 主机→设备 ACL 重组
+  std::vector<std::pair<uint16_t, std::vector<uint8_t>>> delayed_events_;  // (tick 倒计时, 事件)
   std::string local_name_stored_;
   std::array<uint8_t, 8> eir_{};
   // 连接创建延迟状态

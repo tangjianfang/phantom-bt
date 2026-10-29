@@ -213,9 +213,20 @@ std::vector<std::string> MiniController::op_log() const {
 }
 
 void MiniController::handle_acl_from_host(const AclFrame& f) {
-  // M3：LinkTable 接管；M1 只记录
-  PB_LOG_DEBUG("hci: ACL from host handle=" + std::to_string(f.handle) + " pb=0x" +
-               to_hex({(uint8_t)(f.pb >> 8)}) + " len=" + std::to_string(f.data.size()));
+  // 重组 → 完整 L2CAP PDU → 上层回调（ATT/SM）
+  auto pdu = reasm_.feed(f);
+  if (pdu && on_l2cap_from_host) {
+    on_l2cap_from_host(f.handle, *pdu);
+  } else if (pdu) {
+    PB_LOG_DEBUG("hci: L2CAP pdu (no handler) len=" + std::to_string(pdu->size()));
+  }
+}
+
+void MiniController::send_l2cap(uint16_t handle, const std::vector<uint8_t>& pdu) {
+  std::lock_guard<std::mutex> lk(mx_);
+  for (auto& fr : fragment_to_acl(handle, pdu)) {
+    acl_to_host_q_.push_back(std::move(fr));
+  }
 }
 
 void MiniController::handle_command(const uint8_t* p, size_t n) {
@@ -430,6 +441,19 @@ void MiniController::handle_command(const uint8_t* p, size_t n) {
     } else if (cmd.op == CMD_LE_CREATE_CONNECTION_CANCEL) {
       std::lock_guard<std::mutex> lk(mx_);
       conn_pending_ = false;  // 幂等取消
+    } else if (cmd.op == CMD_LE_READ_REMOTE_FEATURES && qn >= 2) {
+      uint16_t h = (uint16_t)(q[0] | (q[1] << 8));
+      std::lock_guard<std::mutex> lk(mx_);
+      if (h == conn_handle_ && h != 0) {
+        std::vector<uint8_t> rp{ST_SUCCESS, (uint8_t)(h & 0xFF), (uint8_t)(h >> 8),
+                                0x01, 0x0F, 0, 0, 0, 0, 0, 0};
+        delayed_events_.push_back({3, build_le_meta(LE_EVT_READ_REMOTE_FEATURES_COMPLETE, rp)});
+      } else {
+        // 未知句柄 → 延迟失败事件
+        std::vector<uint8_t> rp{ST_UNKNOWN_CONN_ID, (uint8_t)(h & 0xFF), (uint8_t)(h >> 8),
+                                0, 0, 0, 0, 0, 0, 0};
+        delayed_events_.push_back({3, build_le_meta(LE_EVT_READ_REMOTE_FEATURES_COMPLETE, rp)});
+      }
     }
     std::vector<uint8_t> evt = build_command_status(ST_SUCCESS, 1, cmd.op);
     {
@@ -493,7 +517,27 @@ void MiniController::tick(uint64_t now_ms) {
       if (status == ST_SUCCESS) {
         conn_handle_ = next_handle_++;
         conn_peer_ = conn_pending_peer_;
+        links_.alloc(conn_peer_, conn_pending_type_);
+        // 延迟：LE Read Remote Features Complete（3 tick ≈ 48ms）
+        std::vector<uint8_t> rp;
+        rp.push_back(ST_SUCCESS);
+        rp.push_back(conn_handle_ & 0xFF);
+        rp.push_back(conn_handle_ >> 8);
+        const uint8_t feat[8] = {0x01, 0x0F, 0, 0, 0, 0, 0, 0};
+        rp.insert(rp.end(), feat, feat + 8);
+        delayed_events_.push_back({3, build_le_meta(LE_EVT_READ_REMOTE_FEATURES_COMPLETE, rp)});
       }
+    }
+  }
+  // 3) 延迟事件到期
+  for (auto it = delayed_events_.begin(); it != delayed_events_.end();) {
+    if (it->first == 0) {
+      event_q_.push_back(it->second);
+      ++event_count_;
+      it = delayed_events_.erase(it);
+    } else {
+      --it->first;
+      ++it;
     }
   }
 }
@@ -504,6 +548,8 @@ void MiniController::simulate_disconnect(uint8_t reason) {
   uint16_t h = conn_handle_;
   conn_handle_ = 0;
   conn_peer_ = 0;
+  links_.release(h);
+  reasm_.reset();
   // Disconnection_Complete: status, handle(2), reason
   std::vector<uint8_t> p{ST_SUCCESS, (uint8_t)(h & 0xFF), (uint8_t)(h >> 8), reason};
   event_q_.push_back(build_event(EVT_DISCONNECTION_COMPLETE, p));
