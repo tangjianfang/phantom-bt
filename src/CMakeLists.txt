@@ -18,6 +18,11 @@ add_library(phantom_core STATIC
   hci/le_air.cpp
   ble/ble_device.cpp
   hci/link.cpp
+  ble/gatt_db.cpp
+  ble/att.cpp
+  ble/services.cpp
+  ble/hogp.cpp
+  ble/l2cap.cpp
   bluetooth/adapter_model.cpp
 )
 

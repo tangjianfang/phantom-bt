@@ -19,6 +19,7 @@ add_executable(phantombt-tests
   unit/test_le_air.cpp
   unit/test_ble_discovery.cpp
   unit/test_link.cpp
+  unit/test_att_gatt.cpp
 )
 target_link_libraries(phantombt-tests PRIVATE phantom_core)
 target_compile_definitions(phantombt-tests PRIVATE PB_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
