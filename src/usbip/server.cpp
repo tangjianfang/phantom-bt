@@ -19,8 +19,15 @@ struct Server::Impl {
   std::atomic<bool> running{false};
   std::unique_ptr<net::TcpListener> listener;
   std::thread accept_thread;
+  // 连接线程登记表：stop 时关闭 socket 解除阻塞 + join 等待线程退出
+  //（防止孤儿线程访问已析构的 Registry/Simulator —— UAF 根治）
+  struct ConnCtx;  // Impl 作用域前置声明
+  struct ConnEntry {
+    std::thread th;
+    ConnCtx* ctx = nullptr;  // 线程退出后置空
+  };
   std::mutex conns_mx;
-  std::vector<net::TcpConn*> conns;  // 活动连接（stop 时关闭以解除阻塞）
+  std::vector<ConnEntry*> conns;
   uint16_t bound_port = 0;
 
   // 每连接上下文：绑定导入的设备 + 挂起 IN 表 + 写互斥
@@ -60,7 +67,7 @@ struct Server::Impl {
   };
 
   void accept_loop();
-  void handle_connection(net::TcpConn conn);
+  void handle_connection(net::TcpConn conn, ConnEntry* entry);
   bool serve_urb_loop(ConnCtx& ctx);
   void reply_submit(ConnCtx& ctx, const SubmitHeader& h, int32_t status, int32_t actual,
                     const uint8_t* data, size_t data_len);
@@ -82,11 +89,24 @@ bool Server::start(std::string* err) {
 void Server::stop() {
   if (!impl_->running.exchange(false)) return;
   if (impl_->listener) impl_->listener->close();
+  if (impl_->accept_thread.joinable()) impl_->accept_thread.join();
   {
     std::lock_guard<std::mutex> lk(impl_->conns_mx);
-    for (auto* c : impl_->conns) c->close();
+    for (auto* e : impl_->conns)
+      if (e->ctx) e->ctx->conn.close();  // 解除阻塞读
   }
-  if (impl_->accept_thread.joinable()) impl_->accept_thread.join();
+  // join 所有连接线程（等待它们退出后再销毁任何共享对象）
+  std::vector<std::thread> to_join;
+  {
+    std::lock_guard<std::mutex> lk(impl_->conns_mx);
+    for (auto* e : impl_->conns) {
+      to_join.push_back(std::move(e->th));
+      delete e;
+    }
+    impl_->conns.clear();
+  }
+  for (auto& t : to_join)
+    if (t.joinable()) t.join();
 }
 
 uint16_t Server::port() const { return impl_->bound_port; }
@@ -99,16 +119,24 @@ void Server::Impl::accept_loop() {
       if (running.load()) PB_LOG_WARN("usbip: accept failed: " + err);
       break;
     }
-    std::thread([this, c = std::move(conn)]() mutable { handle_connection(std::move(c)); }).detach();
+    ConnEntry* entry = new ConnEntry;
+    entry->ctx = nullptr;  // handle_connection 内注册
+    entry->th = std::thread([this, entry, c = std::move(conn)]() mutable {
+      handle_connection(std::move(c), entry);
+    });
+    {
+      std::lock_guard<std::mutex> lk(conns_mx);
+      conns.push_back(entry);
+    }
   }
 }
 
-void Server::Impl::handle_connection(net::TcpConn conn) {
+void Server::Impl::handle_connection(net::TcpConn conn, ConnEntry* entry) {
   ConnCtx ctx;
   ctx.conn = std::move(conn);
   {
     std::lock_guard<std::mutex> lk(conns_mx);
-    conns.push_back(&ctx.conn);
+    entry->ctx = &ctx;  // 登记（stop 可关闭 socket 解除阻塞）
   }
 
   std::string err;
@@ -181,10 +209,10 @@ void Server::Impl::handle_connection(net::TcpConn conn) {
     ctx.detached = true;
   }
   if (model) model->on_detach();
+  // 线程退出：解除登记（entry 对象由 stop() 回收；自然退出时 ctx 置空避免悬垂）
   {
     std::lock_guard<std::mutex> lk(conns_mx);
-    for (auto it = conns.begin(); it != conns.end(); ++it)
-      if (*it == &ctx.conn) { conns.erase(it); break; }
+    entry->ctx = nullptr;
   }
   ctx.conn.close();
 }
