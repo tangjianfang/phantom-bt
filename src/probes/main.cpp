@@ -21,6 +21,7 @@
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Devices.Bluetooth.h>
 #include <winrt/Windows.Devices.Bluetooth.Advertisement.h>
+#include <winrt/Windows.Devices.Bluetooth.GenericAttributeProfile.h>
 #include <winrt/Windows.Devices.Enumeration.h>
 #include <winrt/Windows.Devices.HumanInterfaceDevice.h>
 #include <winrt/Windows.Devices.Radios.h>
@@ -219,6 +220,55 @@ int cmd_watcher(const Args& a) {
   }
 }
 
+int cmd_ble(const Args& a) {
+  std::string addr_hex = str(a, "--address");  // 12 hex digits, MSB first
+  uint32_t wait_ms = num(a, "--wait-ms", 15000);
+  std::string expect_service = str(a, "--expect-service", "1812");
+  if (addr_hex.size() != 12) return finish(false, "bad address", {});
+  uint64_t addr = 0;
+  for (char c : addr_hex) addr = (addr << 4) | (uint64_t)(std::stoul(std::string(1, c), nullptr, 16));
+  try {
+    auto device = Windows::Devices::Bluetooth::BluetoothLEDevice::FromBluetoothAddressAsync(addr).get();
+    if (!device) return finish(false, "nodev", {});
+    auto services_result = device.GetGattServicesAsync(
+                                Windows::Devices::Bluetooth::BluetoothCacheMode::Uncached)
+                                .get();
+    if (services_result.Status() !=
+        Windows::Devices::Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success) {
+      return finish(false, "gatt-status", {});
+    }
+    std::vector<std::string> found;
+    bool has_hid = false;
+    for (auto const& svc : services_result.Services()) {
+      char buf[8];
+      uint16_t uuid = (uint16_t)(svc.Uuid().Data1 & 0xFFFF);
+      std::snprintf(buf, sizeof(buf), "%04x", uuid);
+      found.push_back(buf);
+      if (uuid == 0x1812) has_hid = true;
+    }
+    std::string reason = has_hid ? "" : "no-hid-service";
+    // HID 设备节点由 BthLEEnum 异步生成；等待 HID 集合出现（usagePage 1 usage 6 键盘）
+    bool hid_opened = false;
+    if (has_hid) {
+      auto selector = Windows::Devices::HumanInterfaceDevice::HidDevice::GetDeviceSelector(1, 6);
+      for (uint32_t i = 0; i < wait_ms / 500 && !hid_opened; ++i) {
+        auto devices = Windows::Devices::Enumeration::DeviceInformation::FindAllAsync(selector).get();
+        if (devices.Size() > 0) {
+          hid_opened = true;
+          break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+      }
+    }
+    device.Close();
+    if (!has_hid) return finish(false, reason, found);
+    if (!hid_opened) return finish(false, "no-hid-node", found);
+    return finish(true, "", found);
+  } catch (const winrt::hresult_error& e) {
+    return finish(false, winrt::to_string(e.message()), {});
+  }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -233,6 +283,7 @@ int main(int argc, char** argv) {
     if (mode == "radio") return cmd_radio_winrt(a);
     if (mode == "radio-registry") return cmd_radio_registry(a);
     if (mode == "watcher") return cmd_watcher(a);
+    if (mode == "ble") return cmd_ble(a);
     std::fprintf(stderr, "winrt-probe: mode '%s' not implemented yet\n", mode.c_str());
     return 3;
   } catch (const std::exception& e) {
