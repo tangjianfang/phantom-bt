@@ -12,6 +12,7 @@ add_library(phantom_core STATIC
   sim/device_registry.cpp
   usbip/server.cpp
   sim/simulator.cpp
+  sim/btsnoop.cpp
   control/commands.cpp
   control/pipe_server.cpp
   hci/packets.h

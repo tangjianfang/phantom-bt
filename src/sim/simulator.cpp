@@ -132,6 +132,14 @@ std::string Simulator::cmd_load_bt_adapter() {
   impl_->bt_models[busid] = model;
   // 装配 BLE 设备栈（ATT/GATT/HOGP/SMP 绑定到该控制器）
   impl_->stack = std::make_unique<ble::DeviceStack>(model->controller());
+  // HCI 抓包（Wireshark btsnoop；失败不阻断）
+  auto& ctrl = model->controller();
+  if (snoop_.open("integration-results/hci.snoop")) {
+    ctrl.snoop_command = [this](const std::vector<uint8_t>& c) { snoop_.hci_command(c); };
+    ctrl.snoop_event = [this](const std::vector<uint8_t>& e) { snoop_.hci_event(e); };
+    ctrl.snoop_acl_in = [this](const hci::AclFrame& f) { snoop_.acl_from_host(f); };
+    ctrl.snoop_acl_out = [this](const hci::AclFrame& f) { snoop_.acl_to_host(f); };
+  }
   PB_LOG_INFO("sim: loaded bt adapter as " + busid);
   return busid;
 }

@@ -186,9 +186,12 @@ MiniController::MiniController(const ControllerConfig& cfg) : cfg_(cfg), impl_(n
 MiniController::~MiniController() = default;
 
 void MiniController::push_event(const std::vector<uint8_t>& evt) {
-  std::lock_guard<std::mutex> lk(mx_);
-  event_q_.push_back(evt);
-  ++event_count_;
+  {
+    std::lock_guard<std::mutex> lk(mx_);
+    event_q_.push_back(evt);
+    ++event_count_;
+  }
+  if (snoop_event) snoop_event(evt);
 }
 
 bool MiniController::pop_event(std::vector<uint8_t>& out) {
@@ -213,6 +216,7 @@ std::vector<std::string> MiniController::op_log() const {
 }
 
 void MiniController::handle_acl_from_host(const AclFrame& f) {
+  if (snoop_acl_in) snoop_acl_in(f);
   // 重组 → 完整 L2CAP PDU → 上层回调（ATT/SM）
   auto pdu = reasm_.feed(f);
   if (pdu && on_l2cap_from_host) {
@@ -230,6 +234,7 @@ void MiniController::send_l2cap(uint16_t handle, const std::vector<uint8_t>& pdu
 }
 
 void MiniController::handle_command(const uint8_t* p, size_t n) {
+  if (snoop_command) snoop_command(std::vector<uint8_t>(p, p + n));
   HciCommand cmd;
   if (!parse_command(p, n, cmd)) {
     PB_LOG_WARN("hci: malformed command packet");

@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "sim/btsnoop.h"
 #include "sim/device_registry.h"
 #include "usbip/server.h"
 
@@ -36,10 +37,13 @@ class Simulator {
   // usbip.exe 检测：找到返回路径，否则空
   static std::string find_usbip_exe();
 
+  sim::BtSnoopWriter& snoop() { return snoop_; }  // HCI 抓包（Wireshark 可开）
+
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
   uint16_t port_ = 0;
+  sim::BtSnoopWriter snoop_;
 };
 
 }  // namespace pb::sim

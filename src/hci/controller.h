@@ -42,6 +42,12 @@ class MiniController {
   bool pop_acl_to_host(AclFrame& out);               // BULK IN 拉取
   void push_event(const std::vector<uint8_t>& evt);  // 空口/链路注入
 
+  // —— 观测/抓包（可选：由 Simulator 挂接 btsnoop 记录器）——
+  std::function<void(const std::vector<uint8_t>&)> snoop_command;  // 主机→控制器 HCI 命令
+  std::function<void(const std::vector<uint8_t>&)> snoop_event;    // 控制器→主机 事件
+  std::function<void(const AclFrame&)> snoop_acl_in;               // 主机→控制器 ACL
+  std::function<void(const AclFrame&)> snoop_acl_out;              // 控制器→主机 ACL
+
   // —— 观测（测试/诊断）——
   std::vector<std::string> op_log() const;
   int unknown_opcodes_logged() const { return unknown_count_; }
