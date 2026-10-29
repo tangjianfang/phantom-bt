@@ -11,13 +11,13 @@ PB_TEST(commands_load_list_inject) {
   PB_CHECK(sim.start(&err, 0));  // 随机端口，避免与其他测试冲突
   auto r1 = control::execute(sim, "load-hid profiles/vendor.json");
   PB_CHECK_EQ(r1[0].substr(0, 3), std::string("OK "));
-  auto busid = r1[0].substr(4);
+  auto busid = r1[0].substr(3);
   PB_CHECK_EQ(busid, std::string("7-1"));
 
   auto r2 = control::execute(sim, "list");
   PB_CHECK_EQ(r2.back(), std::string("OK-END"));
   PB_CHECK(std::any_of(r2.begin(), r2.end(), [&](auto& s) {
-    return s.find(busid) != std::string::npos && s.find("1209:B00D") != std::string::npos;
+    return s.find(busid) != std::string::npos && s.find("1209:b00d") != std::string::npos;
   }));
 
   auto r3 = control::execute(sim, "inject " + busid + " DEADBEEF");
@@ -39,7 +39,7 @@ PB_TEST(commands_load_list_inject) {
   PB_CHECK(r8[0].find("load-hid") != std::string::npos);
 
   auto r9 = control::execute(sim, "status");
-  PB_CHECK(r9[0].find("usbip-port=") == 0);
+  PB_CHECK(r9[0].find("usbip-port=") == 3);  // "OK usbip-port=..."
   sim.stop();
 }
 
