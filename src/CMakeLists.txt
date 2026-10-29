@@ -11,6 +11,11 @@ add_library(phantom_core STATIC
   hid/hid_model.cpp
   sim/device_registry.cpp
   usbip/server.cpp
+  sim/simulator.cpp
+  control/commands.cpp
 )
+
+add_executable(phantombt cli/main.cpp)
+target_link_libraries(phantombt PRIVATE phantom_core)
 target_link_libraries(phantom_core PUBLIC ws2_32)
 target_include_directories(phantom_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

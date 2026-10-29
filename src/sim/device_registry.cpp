@@ -4,7 +4,10 @@ namespace pb::sim {
 
 std::string DeviceRegistry::add(std::shared_ptr<pb::usb::IUsbDeviceModel> dev) {
   std::lock_guard<std::mutex> lk(mx_);
-  std::string busid = "7-" + std::to_string(next_++);
+  // 优先使用设备自带 busid（模型 exported() 与导入协议一致）；空则自动分配
+  std::string busid = dev->exported().busid;
+  if (busid.empty()) busid = "7-" + std::to_string(next_);
+  ++next_;
   devices_.emplace_back(busid, std::move(dev));
   return busid;
 }
