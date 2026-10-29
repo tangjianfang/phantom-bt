@@ -1,79 +1,75 @@
-// phantombt-gui.exe：Win32 GUI（内嵌 Simulator + 管道控制）
-// 三页：设备（加载/attach/注入）、BLE（广播/停止）、日志（实时）
+// phantombt-gui.exe：Win32 GUI（仪器面板风：左导航 + 深色主题，见 theme.h）
+// 页面：设备（加载/attach/detach/注入）、BLE（广播/键入）、日志（实时）
+// 全宽字符 API（/utf-8 下中文 UI 必须走 W 系列）
 #include <windows.h>
 #include <commctrl.h>
 #include <commdlg.h>
 #include <cstdio>
 #include <cstring>
 #include <string>
-#include <thread>
+
+#include <uxtheme.h>
+#pragma comment(lib, "uxtheme.lib")
 
 #include "ble/ble_device.h"
 #include "control/commands.h"
 #include "control/pipe_server.h"
 #include "core/log.h"
+#include "gui/theme.h"
 #include "sim/simulator.h"
 
 #pragma comment(lib, "comctl32.lib")
+#pragma comment(linker, "/manifestdependency:\"type='win32' "                \
+                         "name='Microsoft.Windows.Common-Controls' "         \
+                         "version='6.0.0.0' processorArchitecture='*' "      \
+                         "publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 namespace {
 
 constexpr int WM_APP_LOG = WM_APP + 1;
 
+enum CtrlId {
+  IDC_NAV_DEVICE = 10,
+  IDC_NAV_BLE = 11,
+  IDC_NAV_LOG = 12,
+  IDC_BTN_LOAD_HID = 101,
+  IDC_BTN_LOAD_BT = 102,
+  IDC_BTN_ATTACH = 103,
+  IDC_BTN_DETACH = 104,
+  IDC_EDIT_INJECT = 105,
+  IDC_BTN_INJECT = 106,
+  IDC_BTN_BLE_ADV = 201,
+  IDC_BTN_BLE_STOP = 202,
+  IDC_EDIT_TYPE = 203,
+  IDC_BTN_TYPE = 204,
+};
+
 pb::sim::Simulator g_sim;
 pb::control::PipeServer* g_pipe = nullptr;
-HWND g_main = nullptr, g_tabs = nullptr, g_list = nullptr, g_log = nullptr;
-HWND g_ble_list = nullptr, g_type_edit = nullptr;
+HWND g_main = nullptr;
+HWND g_nav_dev = nullptr, g_nav_ble = nullptr, g_nav_log = nullptr;
+HWND g_page_dev = nullptr, g_page_ble = nullptr, g_page_log = nullptr;
+HWND g_list = nullptr, g_inject_edit = nullptr, g_empty_lbl = nullptr;
+HWND g_ble_list = nullptr, g_type_edit = nullptr, g_log = nullptr;
+HBRUSH g_br_surface = nullptr, g_br_bg = nullptr;
+int g_page = 0;
 
-void append_log_sync(const char* text) {
+std::wstring to_w(const std::string& s) {
+  int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
+  std::wstring w(n, 0);
+  MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), w.data(), n);
+  return w;
+}
+
+void append_log_sync(const std::string& utf8) {
   if (!g_log) return;
-  int len = GetWindowTextLengthA(g_log);
-  SendMessageA(g_log, EM_SETSEL, len, len);
-  SendMessageA(g_log, EM_REPLACESEL, FALSE, (LPARAM)text);
-  // 环形上限：超长截前半
+  std::wstring w = to_w(utf8);
+  int len = GetWindowTextLengthW(g_log);
+  SendMessageW(g_log, EM_SETSEL, len, len);
+  SendMessageW(g_log, EM_REPLACESEL, FALSE, (LPARAM)w.c_str());
   if (len > 400000) {
-    char head[2] = "";
-    SendMessageA(g_log, EM_SETSEL, 0, len / 2);
-    SendMessageA(g_log, EM_REPLACESEL, FALSE, (LPARAM)head);
-  }
-}
-
-void refresh_device_list() {
-  if (!g_list) return;
-  SendMessageA(g_list, LVM_DELETEALLITEMS, 0, 0);
-  auto lines = pb::control::execute(g_sim, "list");
-  int row = 0;
-  for (auto& l : lines) {
-    if (l.rfind("DEV ", 0) != 0) continue;
-    std::string rest = l.substr(4);
-    LVITEMA it = {};
-    it.mask = LVIF_TEXT;
-    // busid vid:pid path
-    size_t s1 = rest.find(' ');
-    size_t s2 = rest.find(' ', s1 + 1);
-    std::string busid = rest.substr(0, s1);
-    std::string vidpid = rest.substr(s1 + 1, s2 - s1 - 1);
-    std::string path = s2 == std::string::npos ? "" : rest.substr(s2 + 1);
-    it.iItem = row;
-    it.pszText = busid.data();
-    SendMessageA(g_list, LVM_INSERTITEMA, 0, (LPARAM)&it);
-    it.iSubItem = 1;
-    it.pszText = vidpid.data();
-    SendMessageA(g_list, LVM_SETITEMA, 0, (LPARAM)&it);
-    it.iSubItem = 2;
-    it.pszText = path.data();
-    SendMessageA(g_list, LVM_SETITEMA, 0, (LPARAM)&it);
-    ++row;
-  }
-}
-
-void refresh_ble_list() {
-  if (!g_ble_list) return;
-  SendMessageA(g_ble_list, LB_RESETCONTENT, 0, 0);
-  auto lines = pb::control::execute(g_sim, "ble-list");
-  for (auto& l : lines) {
-    if (l.rfind("OK", 0) == 0) continue;
-    if (!l.empty()) SendMessageA(g_ble_list, LB_ADDSTRING, 0, (LPARAM)l.c_str());
+    SendMessageW(g_log, EM_SETSEL, 0, len / 2);
+    SendMessageW(g_log, EM_REPLACESEL, FALSE, (LPARAM)L"");
   }
 }
 
@@ -81,223 +77,491 @@ void run_and_show(const std::string& cmd) {
   auto replies = pb::control::execute(g_sim, cmd);
   std::string all;
   for (auto& r : replies) all += "> " + cmd + "\n" + r + "\n";
-  append_log_sync(all.c_str());
+  append_log_sync(all);
 }
 
-std::string pick_file(const char* filter) {
-  char file[MAX_PATH] = "";
-  OPENFILENAMEA ofn = {sizeof(ofn)};
+void select_page(int idx) {
+  g_page = idx;
+  SendMessageW(g_nav_dev, pb::gui::PB_NAV_SELECT, idx == 0, 0);
+  SendMessageW(g_nav_ble, pb::gui::PB_NAV_SELECT, idx == 1, 0);
+  SendMessageW(g_nav_log, pb::gui::PB_NAV_SELECT, idx == 2, 0);
+  ShowWindow(g_page_dev, idx == 0 ? SW_SHOW : SW_HIDE);
+  ShowWindow(g_page_ble, idx == 1 ? SW_SHOW : SW_HIDE);
+  ShowWindow(g_page_log, idx == 2 ? SW_SHOW : SW_HIDE);
+  InvalidateRect(g_main, nullptr, TRUE);
+}
+
+void refresh_counts() {
+  int hid = 0, ble = 0;
+  for (auto& l : pb::control::execute(g_sim, "list"))
+    if (l.rfind("DEV ", 0) == 0) ++hid;
+  for (auto& l : pb::control::execute(g_sim, "ble-list"))
+    if (!l.empty() && l.rfind("OK", 0) != 0) ++ble;
+  SendMessageW(g_nav_dev, pb::gui::PB_NAV_BADGE, hid, 0);
+  SendMessageW(g_nav_ble, pb::gui::PB_NAV_BADGE, ble, 0);
+}
+
+void refresh_device_list() {
+  if (!g_list) return;
+  SendMessageW(g_list, LVM_DELETEALLITEMS, 0, 0);
+  auto lines = pb::control::execute(g_sim, "list");
+  int row = 0;
+  if (g_empty_lbl) {
+    bool any = false;
+    for (auto& l : lines)
+      if (l.rfind("DEV ", 0) == 0) any = true;
+    ShowWindow(g_empty_lbl, any ? SW_HIDE : SW_SHOW);
+  }
+  for (auto& l : lines) {
+    if (l.rfind("DEV ", 0) != 0) continue;
+    std::string rest = l.substr(4);
+    size_t s1 = rest.find(' ');
+    size_t s2 = rest.find(' ', s1 + 1);
+    std::string busid = rest.substr(0, s1);
+    std::string vidpid = rest.substr(s1 + 1, s2 - s1 - 1);
+    std::wstring kind = vidpid.rfind("0b00", 0) == 0 ? L"蓝牙适配器" : L"USB HID";
+    std::wstring wbusid = to_w(busid), wvid = to_w(vidpid), wst = L"已就绪";
+    LVITEMW it = {};
+    it.mask = LVIF_TEXT;
+    it.iItem = row;
+    it.pszText = wbusid.data();
+    SendMessageW(g_list, LVM_INSERTITEMW, 0, (LPARAM)&it);
+    it.iSubItem = 1;
+    it.pszText = wvid.data();
+    SendMessageW(g_list, LVM_SETITEMW, 0, (LPARAM)&it);
+    it.iSubItem = 2;
+    it.pszText = kind.data();
+    SendMessageW(g_list, LVM_SETITEMW, 0, (LPARAM)&it);
+    it.iSubItem = 3;
+    it.pszText = wst.data();
+    SendMessageW(g_list, LVM_SETITEMW, 0, (LPARAM)&it);
+    ++row;
+  }
+  refresh_counts();
+}
+
+void refresh_ble_list() {
+  if (!g_ble_list) return;
+  SendMessageW(g_ble_list, LB_RESETCONTENT, 0, 0);
+  auto lines = pb::control::execute(g_sim, "ble-list");
+  for (auto& l : lines) {
+    if (l.rfind("OK", 0) == 0 || l.empty()) continue;
+    std::wstring w = to_w(l);
+    SendMessageW(g_ble_list, LB_ADDSTRING, 0, (LPARAM)w.c_str());
+  }
+  refresh_counts();
+}
+
+std::string pick_file() {
+  wchar_t file[MAX_PATH] = L"";
+  OPENFILENAMEW ofn = {sizeof(ofn)};
   ofn.hwndOwner = g_main;
-  ofn.lpstrFilter = filter;
+  ofn.lpstrFilter = L"Profile (*.json)\0*.json\0所有文件\0*.*\0";
   ofn.lpstrFile = file;
   ofn.nMaxFile = MAX_PATH;
-  ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-  if (GetOpenFileNameA(&ofn)) return file;
+  ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER;
+  if (GetOpenFileNameW(&ofn)) {
+    std::wstring w(file);
+    int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), nullptr, 0, nullptr, nullptr);
+    std::string s(n, 0);
+    WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), s.data(), n, nullptr, nullptr);
+    return s;
+  }
   return "";
 }
 
-void on_command(HWND hwnd, int id) {
+std::string selected_busid() {
+  int sel = ListView_GetSelectionMark(g_list);
+  if (sel < 0) return "";
+  wchar_t buf[64] = {};
+  LVITEMW it = {};
+  it.iItem = sel;
+  it.mask = LVIF_TEXT;
+  it.pszText = buf;
+  it.cchTextMax = 64;
+  SendMessageW(g_list, LVM_GETITEMTEXTW, sel, (LPARAM)&it);
+  std::wstring w(buf);
+  int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), nullptr, 0, nullptr, nullptr);
+  std::string s(n, 0);
+  WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), s.data(), n, nullptr, nullptr);
+  return s;
+}
+
+void on_command(int id) {
   switch (id) {
-    case 101: {  // 加载 HID Profile
-      auto f = pick_file("HID Profile (*.json)\0*.json\0All\0*.*\0");
+    case IDC_NAV_DEVICE: select_page(0); return;
+    case IDC_NAV_BLE: select_page(1); return;
+    case IDC_NAV_LOG: select_page(2); return;
+  }
+  switch (id) {
+    case IDC_BTN_LOAD_HID: {
+      auto f = pick_file();
       if (!f.empty()) {
         run_and_show("load-hid " + f);
         refresh_device_list();
       }
       break;
     }
-    case 102: {  // 加载蓝牙适配器
+    case IDC_BTN_LOAD_BT:
       run_and_show("load-bt");
       refresh_device_list();
       break;
-    }
-    case 103: {  // attach
-      char busid[64] = {};
-      LVITEMA it = {};
-      it.iItem = 0;
-      it.mask = LVIF_TEXT;
-      it.pszText = busid;
-      it.cchTextMax = 64;
-      if (ListView_GetSelectionMark(g_list) >= 0) {
-        it.iItem = ListView_GetSelectionMark(g_list);
-        SendMessageA(g_list, LVM_GETITEMTEXTA, it.iItem, (LPARAM)&it);
-        if (busid[0]) run_and_show(std::string("attach ") + busid);
-      }
+    case IDC_BTN_ATTACH: {
+      auto b = selected_busid();
+      if (!b.empty()) run_and_show("attach " + b);
+      else append_log_sync("> attach\nERR 先在列表中选择设备\n");
       break;
     }
-    case 104: {  // 注入手柄报告（示例：按键1）
-      run_and_show("inject 7-1 0100000000000000");
+    case IDC_BTN_DETACH: {
+      auto b = selected_busid();
+      if (!b.empty()) run_and_show("detach " + b);
+      else append_log_sync("> detach\nERR 先在列表中选择设备\n");
       break;
     }
-    case 201: {  // BLE 广播
-      auto f = pick_file("BLE Profile (*.json)\0*.json\0All\0*.*\0");
+    case IDC_BTN_INJECT: {
+      auto b = selected_busid();
+      wchar_t hex[256] = {};
+      GetWindowTextW(g_inject_edit, hex, 256);
+      std::wstring wh(hex);
+      std::string h(wh.size(), 0);
+      for (size_t i = 0; i < wh.size(); ++i) h[i] = (char)wh[i];  // hex 输入是 ASCII
+      // 空格剔除（用户可能按 "01 00" 输入）
+      std::string clean;
+      for (char c : h)
+        if (c != ' ') clean.push_back(c);
+      if (!b.empty() && !clean.empty()) run_and_show("inject " + b + " " + clean);
+      else append_log_sync("> inject\nERR 需要选中设备并填写十六进制报告\n");
+      break;
+    }
+    case IDC_BTN_BLE_ADV: {
+      auto f = pick_file();
       if (!f.empty()) {
         run_and_show("ble-advertise " + f);
         refresh_ble_list();
       }
       break;
     }
-    case 202: {  // BLE 停止选中
-      int sel = SendMessageA(g_ble_list, LB_GETCURSEL, 0, 0);
+    case IDC_BTN_BLE_STOP: {
+      int sel = SendMessageW(g_ble_list, LB_GETCURSEL, 0, 0);
       if (sel >= 0) {
-        char buf[128] = {};
-        SendMessageA(g_ble_list, LB_GETTEXT, sel, (LPARAM)buf);
-        std::string line = buf;
+        wchar_t buf[128] = {};
+        SendMessageW(g_ble_list, LB_GETTEXT, sel, (LPARAM)buf);
+        std::wstring w(buf);
+        std::string line(w.begin(), w.end());
         size_t sp = line.find(' ');
         if (sp != std::string::npos) run_and_show("ble-stop " + line.substr(0, sp));
         refresh_ble_list();
       }
       break;
     }
-    case 203: {  // 键入文本（BLE 键盘）
-      char text[256] = {};
-      GetWindowTextA(g_type_edit, text, 256);
-      if (text[0]) run_and_show(std::string("ble-type C0:11:22:33:44:55 ") + text);
+    case IDC_BTN_TYPE: {
+      wchar_t text[256] = {};
+      GetWindowTextW(g_type_edit, text, 256);
+      std::wstring w(text);
+      std::string t(w.begin(), w.end());
+      if (!t.empty()) run_and_show("ble-type C0:11:22:33:44:55 " + t);
       break;
     }
   }
+}
+
+// 页面容器：深色表面 + 子控件配色
+LRESULT CALLBACK page_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
+  switch (msg) {
+    case WM_ERASEBKGND:
+      return 1;
+    case WM_PAINT: {
+      PAINTSTRUCT ps;
+      HDC dc = BeginPaint(h, &ps);
+      RECT rc;
+      GetClientRect(h, &rc);
+      FillRect(dc, &rc, g_br_surface);
+      EndPaint(h, &ps);
+      return 0;
+    }
+    case WM_CTLCOLOREDIT:
+    case WM_CTLCOLORLISTBOX: {
+      HDC dc = (HDC)wp;
+      SetBkColor(dc, pb::gui::BG);
+      SetTextColor(dc, pb::gui::TEXT);
+      return (LRESULT)g_br_bg;
+    }
+    case WM_CTLCOLORSTATIC: {
+      HDC dc = (HDC)wp;
+      SetBkColor(dc, pb::gui::SURFACE);
+      bool is_empty_hint = (HWND)lp == g_empty_lbl;
+      SetTextColor(dc, is_empty_hint ? RGB(0xB6, 0xBE, 0xC6) : pb::gui::TEXT_DIM);
+      return (LRESULT)g_br_surface;
+    }
+  }
+  return DefWindowProcW(h, msg, wp, lp);
 }
 
 LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   switch (msg) {
     case WM_CREATE: {
-      g_tabs = CreateWindowExA(0, WC_TABCONTROLA, "", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
-                               0, 0, 900, 600, hwnd, (HMENU)1, nullptr, nullptr);
-      TCITEMA ti = {};
-      ti.mask = TCIF_TEXT;
-      ti.pszText = (char*)"设备";
-      SendMessageA(g_tabs, TCM_INSERTITEMA, 0, (LPARAM)&ti);
-      ti.pszText = (char*)"BLE";
-      SendMessageA(g_tabs, TCM_INSERTITEMA, 1, (LPARAM)&ti);
-      ti.pszText = (char*)"日志";
-      SendMessageA(g_tabs, TCM_INSERTITEMA, 2, (LPARAM)&ti);
+      auto* cs = (CREATESTRUCTW*)lp;
+      pb::gui::register_pb_controls(cs->hInstance);
+      pb::gui::enable_dark_titlebar(hwnd);
+
+      int navw = pb::gui::scale(pb::gui::NAV_W);
+      int apph = pb::gui::scale(pb::gui::APPBAR_H);
+      int sth = pb::gui::scale(pb::gui::STATUS_H);
+      auto mknav = [&](int id, const wchar_t* label, int y) {
+        return CreateWindowExW(0, L"PbNavItem", label, WS_CHILD | WS_VISIBLE, 0, y, navw,
+                               pb::gui::scale(40), hwnd, (HMENU)(INT_PTR)id, cs->hInstance, nullptr);
+      };
+      g_nav_dev = mknav(IDC_NAV_DEVICE, L"USB 设备", apph + pb::gui::scale(14));
+      g_nav_ble = mknav(IDC_NAV_BLE, L"BLE 设备", apph + pb::gui::scale(58));
+      g_nav_log = mknav(IDC_NAV_LOG, L"日志", apph + pb::gui::scale(102));
 
       RECT rc;
-      GetClientRect(g_tabs, &rc);
-      SendMessageA(g_tabs, TCM_ADJUSTRECT, FALSE, (LPARAM)&rc);
+      GetClientRect(hwnd, &rc);
+      int cw = rc.right - navw - pb::gui::scale(pb::gui::PAD);
+      int ch = rc.bottom - apph - sth - pb::gui::scale(pb::gui::PAD) * 2;
+      auto mkpage = [&](int id) {
+        return CreateWindowExW(0, L"PbPage", L"", WS_CHILD,
+                               navw + pb::gui::scale(pb::gui::PAD), apph + pb::gui::scale(pb::gui::PAD),
+                               cw, ch, hwnd, (HMENU)(INT_PTR)id, cs->hInstance, nullptr);
+      };
+      g_page_dev = mkpage(1);
+      g_page_ble = mkpage(2);
+      g_page_log = mkpage(3);
 
-      // 页1：设备
-      g_list = CreateWindowExA(0, WC_LISTVIEWA, "",
-                               WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SHOWSELALWAYS,
-                               rc.left + 8, rc.top + 8, rc.right - rc.left - 16, 420, g_tabs,
-                               nullptr, nullptr, nullptr);
+      int pad = pb::gui::scale(pb::gui::PAD);
+      auto mkbtn = [&](int id, const wchar_t* text, int x, int y, int w, bool primary, HWND parent) {
+        HWND b = CreateWindowExW(0, L"PbButton", text,
+                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP |
+                                     (primary ? BS_DEFPUSHBUTTON : 0u),
+                                 x, y, w, pb::gui::scale(32), parent, (HMENU)(INT_PTR)id,
+                                 cs->hInstance, nullptr);
+        SendMessageW(b, WM_SETFONT, (WPARAM)pb::gui::font_ui(), TRUE);
+        return b;
+      };
+
+      // —— 页1：设备 ——
+      g_list = CreateWindowExW(0, WC_LISTVIEWW, L"",
+                               WS_CHILD | LVS_REPORT | LVS_SHOWSELALWAYS | WS_TABSTOP, pad, pad,
+                               cw - pad * 2, ch - pad * 2 - pb::gui::scale(104), g_page_dev,
+                               nullptr, cs->hInstance, nullptr);
       ListView_SetExtendedListViewStyle(g_list, LVS_EX_FULLROWSELECT);
-      LVCOLUMNA col = {};
+      SetWindowTheme(g_list, L"DarkMode_Explorer", nullptr);
+      SendMessageW(g_list, WM_SETFONT, (WPARAM)pb::gui::font_mono(), TRUE);
+      LVCOLUMNW col = {};
       col.mask = LVCF_TEXT | LVCF_WIDTH;
-      col.pszText = (char*)"busid";
-      col.cx = 70;
-      SendMessageA(g_list, LVM_INSERTCOLUMNA, 0, (LPARAM)&col);
-      col.pszText = (char*)"vid:pid";
-      col.cx = 100;
-      SendMessageA(g_list, LVM_INSERTCOLUMNA, 1, (LPARAM)&col);
-      col.pszText = (char*)"路径";
-      col.cx = 380;
-      SendMessageA(g_list, LVM_INSERTCOLUMNA, 2, (LPARAM)&col);
-      CreateWindowExA(0, "BUTTON", "加载 HID Profile", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                      rc.left + 8, rc.top + 440, 140, 30, g_tabs, (HMENU)101, nullptr, nullptr);
-      CreateWindowExA(0, "BUTTON", "加载蓝牙适配器", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                      rc.left + 156, rc.top + 440, 140, 30, g_tabs, (HMENU)102, nullptr, nullptr);
-      CreateWindowExA(0, "BUTTON", "Attach 选中", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                      rc.left + 304, rc.top + 440, 120, 30, g_tabs, (HMENU)103, nullptr, nullptr);
-      CreateWindowExA(0, "BUTTON", "注入示例报告", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                      rc.left + 432, rc.top + 440, 120, 30, g_tabs, (HMENU)104, nullptr, nullptr);
+      col.pszText = (wchar_t*)L"busid";
+      col.cx = pb::gui::scale(64);
+      SendMessageW(g_list, LVM_INSERTCOLUMNW, 0, (LPARAM)&col);
+      col.pszText = (wchar_t*)L"vid:pid";
+      col.cx = pb::gui::scale(92);
+      SendMessageW(g_list, LVM_INSERTCOLUMNW, 1, (LPARAM)&col);
+      col.pszText = (wchar_t*)L"类型";
+      col.cx = pb::gui::scale(110);
+      SendMessageW(g_list, LVM_INSERTCOLUMNW, 2, (LPARAM)&col);
+      col.pszText = (wchar_t*)L"状态";
+      col.cx = pb::gui::scale(92);
+      SendMessageW(g_list, LVM_INSERTCOLUMNW, 3, (LPARAM)&col);
 
-      // 页2：BLE
-      g_ble_list = CreateWindowExA(0, "LISTBOX", "",
-                                   WS_CHILD | LBS_NOTIFY, rc.left + 8, rc.top + 8,
-                                   rc.right - rc.left - 16, 300, g_tabs, nullptr, nullptr, nullptr);
-      CreateWindowExA(0, "BUTTON", "BLE 广播", WS_CHILD | BS_PUSHBUTTON, rc.left + 8, rc.top + 320,
-                      120, 30, g_tabs, (HMENU)201, nullptr, nullptr);
-      CreateWindowExA(0, "BUTTON", "停止选中", WS_CHILD | BS_PUSHBUTTON, rc.left + 136,
-                      rc.top + 320, 120, 30, g_tabs, (HMENU)202, nullptr, nullptr);
-      g_type_edit = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "", WS_CHILD, rc.left + 8,
-                                    rc.top + 360, 300, 26, g_tabs, nullptr, nullptr, nullptr);
-      CreateWindowExA(0, "BUTTON", "键入文本(PhantomKb)", WS_CHILD | BS_PUSHBUTTON, rc.left + 316,
-                      rc.top + 360, 170, 26, g_tabs, (HMENU)203, nullptr, nullptr);
+      int by = ch - pad - pb::gui::scale(84);
+      int bw = pb::gui::scale(118);
+      mkbtn(IDC_BTN_LOAD_HID, L"加载 HID 设备", pad, by, bw, false, g_page_dev);
+      mkbtn(IDC_BTN_LOAD_BT, L"加载蓝牙适配器", pad + bw + pad, by, bw, false, g_page_dev);
+      mkbtn(IDC_BTN_ATTACH, L"附加设备", pad + (bw + pad) * 2, by, pb::gui::scale(84), true,
+            g_page_dev);
+      mkbtn(IDC_BTN_DETACH, L"分离设备", pad + (bw + pad) * 2 + pb::gui::scale(88), by,
+            pb::gui::scale(84), false, g_page_dev);
+      // 第二行：hex 输入（左对齐第一列）+ 发送紧随其后
+      g_inject_edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"0100000000000000",
+                                      WS_CHILD | WS_TABSTOP, pad, by + pb::gui::scale(44),
+                                      pb::gui::scale(220), pb::gui::scale(28), g_page_dev, nullptr,
+                                      cs->hInstance, nullptr);
+      SendMessageW(g_inject_edit, WM_SETFONT, (WPARAM)pb::gui::font_mono(), TRUE);
+      mkbtn(IDC_BTN_INJECT, L"发送报告", pad + pb::gui::scale(224), by + pb::gui::scale(42),
+            pb::gui::scale(96), false, g_page_dev);
+      // 空状态引导（有设备时隐藏）
+      g_empty_lbl = CreateWindowExW(0, L"STATIC",
+                                    L"未加载设备\n点击下方「加载 HID 设备」或「加载蓝牙适配器」",
+                                    WS_CHILD | WS_VISIBLE | SS_CENTER, pad,
+                                    pb::gui::scale(140), cw - pad * 2, pb::gui::scale(60),
+                                    g_page_dev, nullptr, cs->hInstance, nullptr);
+      SendMessageW(g_empty_lbl, WM_SETFONT, (WPARAM)pb::gui::font_ui(), TRUE);
 
-      // 页3：日志
-      g_log = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "",
+      // —— 页2：BLE ——
+      g_ble_list = CreateWindowExW(0, L"LISTBOX", L"", WS_CHILD | LBS_NOTIFY | WS_TABSTOP |
+                                                              LBS_NOINTEGRALHEIGHT,
+                                   pad, pad, cw - pad * 2, ch - pad * 2 - pb::gui::scale(112),
+                                   g_page_ble, nullptr, cs->hInstance, nullptr);
+      SendMessageW(g_ble_list, WM_SETFONT, (WPARAM)pb::gui::font_mono(), TRUE);
+      mkbtn(IDC_BTN_BLE_ADV, L"加载 BLE 广播", pad, ch - pad - pb::gui::scale(84), bw, false,
+            g_page_ble);
+      mkbtn(IDC_BTN_BLE_STOP, L"停止选中", pad + bw + pad, ch - pad - pb::gui::scale(84),
+            pb::gui::scale(96), false, g_page_ble);
+      g_type_edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"hello", WS_CHILD | WS_TABSTOP,
+                                    pad, ch - pad - pb::gui::scale(40), pb::gui::scale(220),
+                                    pb::gui::scale(28), g_page_ble, nullptr, cs->hInstance, nullptr);
+      SendMessageW(g_type_edit, WM_SETFONT, (WPARAM)pb::gui::font_mono(), TRUE);
+      mkbtn(IDC_BTN_TYPE, L"键入到 PhantomKb", pad + pb::gui::scale(228),
+            ch - pad - pb::gui::scale(44), pb::gui::scale(160), true, g_page_ble);
+
+      // —— 页3：日志 ——
+      g_log = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
                               WS_CHILD | ES_MULTILINE | WS_VSCROLL | ES_AUTOVSCROLL | ES_READONLY,
-                              rc.left + 8, rc.top + 8, rc.right - rc.left - 16,
-                              rc.bottom - rc.top - 16, g_tabs, nullptr, nullptr, nullptr);
-      SendMessageA(g_tabs, TCM_SETCURSEL, 0, 0);
-      break;
-    }
-    case WM_NOTIFY: {
-      auto* nm = (NMHDR*)lp;
-      if (nm->hwndFrom == g_tabs && nm->code == TCN_SELCHANGE) {
-        int sel = SendMessageA(g_tabs, TCM_GETCURSEL, 0, 0);
-        ShowWindow(g_list, sel == 0 ? SW_SHOW : SW_HIDE);
-        ShowWindow(g_ble_list, sel == 1 ? SW_SHOW : SW_HIDE);
-        ShowWindow(g_type_edit, sel == 1 ? SW_SHOW : SW_HIDE);
-        ShowWindow(g_log, sel == 2 ? SW_SHOW : SW_HIDE);
-        // 页1/页2 的按钮们
-        HWND child = GetWindow(g_tabs, GW_CHILD);
-        while (child) {
-          char cls[16];
-          GetClassNameA(child, cls, 16);
-          if (lstrcmpA(cls, "Button") == 0) {
-            int id = GetDlgCtrlID(child);
-            bool page1 = id >= 101 && id <= 104;
-            bool page2 = id >= 201 && id <= 203;
-            ShowWindow(child, (sel == 0 && page1) || (sel == 1 && page2) ? SW_SHOW : SW_HIDE);
-          }
-          child = GetWindow(child, GW_HWNDNEXT);
-        }
-      }
+                              pad, pad, cw - pad * 2, ch - pad * 2, g_page_log, nullptr,
+                              cs->hInstance, nullptr);
+      SendMessageW(g_log, WM_SETFONT, (WPARAM)pb::gui::font_mono(), TRUE);
+
+      select_page(0);
+      refresh_device_list();
       break;
     }
     case WM_COMMAND:
-      if (HIWORD(wp) == BN_CLICKED) on_command(hwnd, LOWORD(wp));
+      if (HIWORD(wp) == BN_CLICKED || HIWORD(wp) == 1) on_command(LOWORD(wp));
       if (HIWORD(wp) == LBN_DBLCLK) refresh_ble_list();
       break;
     case WM_APP_LOG:
       append_log_sync((const char*)wp ? (const char*)wp : "");
-      delete[] (char*)wp;
+      delete[](char*) wp;
       return 1;
+    case WM_ERASEBKGND:
+      return 1;
+    case WM_PAINT: {
+      PAINTSTRUCT ps;
+      HDC dc = BeginPaint(hwnd, &ps);
+      RECT rc;
+      GetClientRect(hwnd, &rc);
+      int apph = pb::gui::scale(pb::gui::APPBAR_H);
+      int navw = pb::gui::scale(pb::gui::NAV_W);
+      int sth = pb::gui::scale(pb::gui::STATUS_H);
+
+      FillRect(dc, &rc, g_br_bg);
+      RECT ab = {0, 0, rc.right, apph};
+      FillRect(dc, &ab, g_br_surface);
+      pb::gui::draw_hline(dc, 0, apph, rc.right, pb::gui::STROKE);
+
+      SetBkMode(dc, TRANSPARENT);
+      int led_r = pb::gui::scale(5);
+      int led_cx = pb::gui::scale(22), led_cy = apph / 2;
+      HBRUSH led = CreateSolidBrush(pb::gui::ACCENT);
+      HBRUSH oldb = (HBRUSH)SelectObject(dc, led);
+      Ellipse(dc, led_cx - led_r, led_cy - led_r, led_cx + led_r, led_cy + led_r);
+      SelectObject(dc, oldb);
+      DeleteObject(led);
+
+      SetTextColor(dc, pb::gui::TEXT);
+      HFONT old = (HFONT)SelectObject(dc, pb::gui::font_ui_bold());
+      RECT tr = {led_cx + led_r + pb::gui::scale(10), 0, pb::gui::scale(300), apph};
+      DrawTextW(dc, L"虚拟设备测试台", -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+      SelectObject(dc, pb::gui::font_ui());
+      SetTextColor(dc, pb::gui::TEXT_DIM);
+      auto st = pb::control::execute(g_sim, "status");
+      std::wstring s = st.empty() ? L"" : to_w(st[0].substr(3));
+      for (auto& c : s)
+        if (c == L' ') c = L'·';
+      for (size_t i = 0; i + 5 < s.size(); ++i)
+        if (s.compare(i, 5, L"port=") == 0) s.erase(i, 4);
+      size_t dq = s.find(L"devices=");
+      if (dq != std::wstring::npos) s.replace(dq, 8, L"设备 ");
+      RECT sr = {rc.right - pb::gui::scale(340), 0, rc.right - pb::gui::scale(16), apph};
+      DrawTextW(dc, s.c_str(), -1, &sr, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+      SelectObject(dc, old);
+
+      HPEN pen = CreatePen(PS_SOLID, 1, RGB(0x3A, 0x41, 0x48));
+      HPEN oldpen = (HPEN)SelectObject(dc, pen);
+      MoveToEx(dc, navw, apph, nullptr);
+      LineTo(dc, navw, rc.bottom - sth);
+      SelectObject(dc, oldpen);
+      DeleteObject(pen);
+
+      RECT sb = {0, rc.bottom - sth, rc.right, rc.bottom};
+      FillRect(dc, &sb, g_br_surface);
+      pb::gui::draw_hline(dc, 0, rc.bottom - sth, rc.right, pb::gui::STROKE);
+      SetTextColor(dc, pb::gui::TEXT_DIM);
+      SelectObject(dc, pb::gui::font_ui());
+      RECT fr = {pb::gui::scale(pb::gui::PAD), rc.bottom - sth, rc.right, rc.bottom};
+      DrawTextW(dc, L"个人 / 非商业使用免费 · 商业使用需授权（LICENSE）", -1, &fr,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+      SelectObject(dc, old);
+
+      EndPaint(hwnd, &ps);
+      return 0;
+    }
+    case WM_SIZE: {
+      // 内容区随窗口缩放
+      int navw = pb::gui::scale(pb::gui::NAV_W);
+      int apph = pb::gui::scale(pb::gui::APPBAR_H);
+      int sth = pb::gui::scale(pb::gui::STATUS_H);
+      int cw = LOWORD(lp) - navw - pb::gui::scale(pb::gui::PAD);
+      int ch = HIWORD(lp) - apph - sth - pb::gui::scale(pb::gui::PAD) * 2;
+      int px = navw + pb::gui::scale(pb::gui::PAD);
+      int py = apph + pb::gui::scale(pb::gui::PAD);
+      MoveWindow(g_page_dev, px, py, cw, ch, TRUE);
+      MoveWindow(g_page_ble, px, py, cw, ch, TRUE);
+      MoveWindow(g_page_log, px, py, cw, ch, TRUE);
+      int pad = pb::gui::scale(pb::gui::PAD);
+      if (g_list) MoveWindow(g_list, pad, pad, cw - pad * 2, ch - pad * 2 - pb::gui::scale(104), TRUE);
+      if (g_ble_list)
+        MoveWindow(g_ble_list, pad, pad, cw - pad * 2, ch - pad * 2 - pb::gui::scale(112), TRUE);
+      if (g_log) MoveWindow(g_log, pad, pad, cw - pad * 2, ch - pad * 2, TRUE);
+      InvalidateRect(hwnd, nullptr, TRUE);
+      break;
+    }
     case WM_DESTROY:
       PostQuitMessage(0);
       break;
   }
-  return DefWindowProcA(hwnd, msg, wp, lp);
+  return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
 }  // namespace
 
-int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int show) {
-  INITCOMMONCONTROLSEX icc = {sizeof(icc), ICC_LISTVIEW_CLASSES | ICC_TAB_CLASSES};
+int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
+  if (HMODULE u32 = GetModuleHandleW(L"user32.dll")) {
+    using Fn = BOOL(WINAPI*)(DPI_AWARENESS_CONTEXT);
+    if (auto fn = (Fn)GetProcAddress(u32, "SetProcessDpiAwarenessContext"))
+      fn(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+  }
+  INITCOMMONCONTROLSEX icc = {sizeof(icc), ICC_LISTVIEW_CLASSES};
   InitCommonControlsEx(&icc);
+
+  pb::gui::theme_init(nullptr);  // 屏幕取 DPI（创建窗口前）
+  // （to_w 定义于匿名命名空间，此处 err 转换）
 
   std::string err;
   if (!g_sim.start(&err, 3240)) {
-    MessageBoxA(nullptr, ("Simulator 启动失败: " + err).c_str(), "Phantom-BT", MB_ICONERROR);
+    MessageBoxW(nullptr, (L"Simulator 启动失败: " + to_w(err)).c_str(),
+                L"phantom-bt", MB_ICONERROR);
     return 1;
   }
   static pb::control::PipeServer pipe(g_sim);
   g_pipe = &pipe;
   pipe.start(&err);
 
-  // 日志 → GUI（后台线程安全：经 SendMessage 同步）
+  g_br_surface = CreateSolidBrush(pb::gui::SURFACE);
+  g_br_bg = CreateSolidBrush(pb::gui::BG);
+
   pb::log_set_sink([](pb::LogLevel, std::string_view line) {
-    if (!g_log) return;
+    if (!g_log || !g_main) return;
     std::string heap(line);
     heap += "\n";
     char* p = new char[heap.size() + 1];
     std::memcpy(p, heap.c_str(), heap.size() + 1);
-    if (!SendMessageA(g_main, WM_APP_LOG, (WPARAM)p, 0)) {
-      delete[] p;  // 窗口销毁后
-    }
+    if (!SendMessageW(g_main, WM_APP_LOG, (WPARAM)p, 0)) delete[] p;
   });
 
-  WNDCLASSA wc = {};
+  WNDCLASSW wc = {};
   wc.lpfnWndProc = wnd_proc;
   wc.hInstance = inst;
   wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-  wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
-  wc.lpszClassName = "PhantomBTMain";
-  RegisterClassA(&wc);
-  g_main = CreateWindowExA(0, "PhantomBTMain", "Phantom-BT 虚拟设备测试台",
-                           WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 920, 660, nullptr,
+  wc.lpszClassName = L"PhantomBTMain";
+  RegisterClassW(&wc);
+  WNDCLASSW pg = {};
+  pg.lpfnWndProc = page_proc;
+  pg.hInstance = inst;
+  pg.lpszClassName = L"PbPage";
+  RegisterClassW(&pg);
+
+  g_main = CreateWindowExW(0, L"PhantomBTMain", L"phantom-bt · 虚拟设备测试台",
+                           WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 980, 700, nullptr,
                            nullptr, inst, nullptr);
   ShowWindow(g_main, show);
   UpdateWindow(g_main);
@@ -305,13 +569,16 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int show) {
   refresh_device_list();
 
   MSG msg;
-  while (GetMessageA(&msg, nullptr, 0, 0) > 0) {
+  while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
     TranslateMessage(&msg);
-    DispatchMessageA(&msg);
+    DispatchMessageW(&msg);
   }
 
   pb::log_set_sink(nullptr);
   pipe.stop();
   g_sim.stop();
+  DeleteObject(g_br_surface);
+  DeleteObject(g_br_bg);
+  pb::gui::theme_shutdown();
   return (int)msg.wParam;
 }

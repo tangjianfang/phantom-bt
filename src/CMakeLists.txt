@@ -57,5 +57,5 @@ endif()
 target_link_libraries(phantom_core PUBLIC ws2_32)
 target_include_directories(phantom_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_executable(phantombt-gui WIN32 gui/main.cpp)
+add_executable(phantombt-gui WIN32 gui/main.cpp gui/theme.cpp)
 target_link_libraries(phantombt-gui PRIVATE phantom_core comctl32)

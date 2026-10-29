@@ -1,0 +1,119 @@
+# PolyForm Noncommercial License 1.0.0
+
+<https://polyformproject.org/licenses/noncommercial/1.0.0>
+
+## Acceptance
+
+In order to get any license under these terms, you must
+agree to them as both strict obligations and conditions
+to all your licenses.
+
+## Copyright License
+
+The licensor grants you a copyright license for the
+software to do everything that might infringe the
+licensor's copyright, patent, or trademark rights in the
+software for you to do the following:
+
+1. Develop and improve the software for your own use, as
+   well as for internal use within your organization.
+
+2. Contribute changes and fixes back to the project as
+   pull requests under these same terms.
+
+3. Teach, train, and demonstrate the software, provided
+   that the software is not repackaged or redistributed
+   as a competing commercial product.
+
+Within the limits of the conditions below:
+
+## Noncommercial Purposes Only
+
+Any license granted under these terms applies only to
+noncommercial purposes. Noncommercial purposes include
+personal use for study, evaluation, research, teaching,
+hacking, and testing, as well as use by charitable
+organizations, public educational institutions, and
+open-source contributors developing software that is
+licensed under an open-source license approved by the
+Open Source Initiative (https://opensource.org/licenses).
+
+Commercial purposes are any use of the software other
+than, or in addition to, noncommercial purposes. Examples
+of commercial purposes include, without limitation:
+
+1. Selling, sublicensing, or hosting the software as a
+   product or service, or as part of one.
+
+2. Building, integrating, or shipping the software as
+   part of, or in support of, a commercial product,
+   service, or internal business process, whether by
+   yourself, contractors, or customers.
+
+3. Using the software in connection with revenue-generating
+   activities of any kind.
+
+## Notices
+
+You must ensure that anyone who gets a copy of any part of
+the software from you also gets a copy of these terms or
+the URL for them above, as well as copies of any plain-text
+lines that the licensor specifies for inclusion in
+notices.
+
+If the software includes source code, you must include
+these terms with it in a file named `LICENSE`.
+
+## No Other Rights
+
+These terms do not allow you to sublicense or transfer any
+of your licenses to anyone else, or prevent the licensor
+from granting licenses to anyone else.
+
+## Patent Defense
+
+If you make any written claim that the software infringes
+or contributes to infringement of any patent, your license
+for the software granted under these terms ends
+immediately. If your company makes such a claim, your
+license ends immediately for work on behalf of your
+company.
+
+## Violations
+
+The first time you are notified in writing that you have
+violated any of these terms, or done anything with the
+software not covered by your licenses, your licenses can
+nevertheless continue if you come into full compliance with
+these terms, and take practical steps to correct past
+violations, within 32 days of receiving notice. Otherwise
+all your licenses end immediately.
+
+## No Liability
+
+***As far as the law allows, the software comes as is,
+without any warranty or condition, and the licensor will
+not be liable to you for any damages arising out of these
+terms or the use or nature of the software, under any kind
+of legal claim.***
+
+## Definitions
+
+The **licensor** is the individual or entity offering these
+terms, and the **software** is the software the licensor
+makes available under these terms.
+
+**You** refers to the individual or entity agreeing to
+these terms, and **your company** is any entity that
+controls, is controlled by, or is under common control
+with you.
+
+---
+
+# Commercial Licensing
+
+phantom-bt is additionally available under a commercial
+license for business use. For licensing terms, pricing, and
+support, please contact the author via GitHub
+(https://github.com/tangjianfang) or open an issue in this
+repository.

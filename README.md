@@ -32,8 +32,14 @@ CLI: phantombt.exe ／ GUI: phantombt-gui.exe ／ 探针: winrt-probe.exe
 
 ## 构建 / 测试
 
+```bat
+build.bat                 :: 构建 Debug（= tools\build.ps1）
+build.bat release         :: 构建 Release
+build.bat test            :: 构建 + 运行全部单测
+build.bat clean           :: 清理 build\
+```
+
 ```powershell
-powershell -File tools/build.ps1                 # 构建 Debug
 powershell -File tools/run-tests.ps1             # 单测 + M0..M3 回环（无需驱动）
 powershell -File tools/coverage.ps1              # OpenCppCoverage 行覆盖
 ```
@@ -95,3 +101,10 @@ HCI 抓包：运行时自动写 `integration-results/hci.snoop`（Wireshark 直�
 ## 排障
 
 见 `docs/troubleshooting.md`（M1 失败定位法、未知 HCI 命令补齐流程、多无线电问题）。
+
+## 许可
+
+**个人 / 非商业用途免费**（学习、研究、教学、开源贡献等）；**商业用途需另行授权**。
+详见 [LICENSE](LICENSE)（PolyForm Noncommercial 1.0.0 + 商业授权条款）。
+发布远端仓库：`tools\create-repo.bat`（需 gh CLI 已登录）。
+
