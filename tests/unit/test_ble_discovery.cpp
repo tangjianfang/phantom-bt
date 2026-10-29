@@ -131,6 +131,9 @@ PB_TEST(controller_disconnect_event) {
   c.pop_event(e);
   for (int i = 0; i < 30; ++i) c.tick_for_tests(i * 16);
   PB_CHECK(c.has_connection());
+  while (c.pop_event(e)) {  // 排空连接建立事件
+    PB_CHECK_EQ(e[0], EVT_LE_META);
+  }
 
   c.simulate_disconnect(0x13);  // Remote User Terminated
   PB_CHECK(c.pop_event(e));
