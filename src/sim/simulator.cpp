@@ -10,6 +10,7 @@
 #include "core/net.h"
 #include "bluetooth/adapter_model.h"
 #include "ble/ble_device.h"
+#include "ble/device_stack.h"
 #include "hid/hid_model.h"
 #include "hid/profiles.h"
 
@@ -21,8 +22,9 @@ struct Simulator::Impl {
   uint32_t next_devnum = 1;
   std::map<std::string, std::shared_ptr<hid::HidModel>> hid_models;  // busid → hid 模型
   std::map<std::string, std::shared_ptr<bt::AdapterModel>> bt_models;
-  // BLE 虚拟设备（挂在首个 bt 适配器的空口上）
+  // BLE 虚拟设备（挂在首个 bt 适配器的空口上）+ 设备栈（ATT/GATT/HOGP/SMP）
   std::map<uint64_t, ble::BleDeviceDef> ble_devices;
+  std::unique_ptr<ble::DeviceStack> stack;
   std::thread tick_thread;
   std::atomic<bool> ticking{false};
   bt::AdapterModel* adapter_for_ble() {
@@ -73,7 +75,9 @@ std::string Simulator::cmd_ble_advertise(const std::string& json_path) {
   adv->set_scan_response(def.name);
   ad->controller().air().add(std::move(adv));
   impl_->ble_devices[def.address] = def;
-  PB_LOG_INFO("sim: ble advertising '" + def.name + "' @ " + ble::BleDeviceDef::format_address(def.address));
+  if (impl_->stack && def.kind == "keyboard") impl_->stack->setup_keyboard(def.name);
+  PB_LOG_INFO("sim: ble advertising '" + def.name + "' @ " +
+              ble::BleDeviceDef::format_address(def.address));
   return "OK " + ble::BleDeviceDef::format_address(def.address);
 }
 
@@ -95,6 +99,20 @@ std::string Simulator::cmd_ble_list() {
   return out;
 }
 
+std::string Simulator::cmd_ble_type(const std::string& addr_hex, const std::string& text) {
+  if (!impl_->stack) throw std::runtime_error("no bt adapter loaded");
+  auto* ad = impl_->adapter_for_ble();
+  if (!ad->controller().has_connection())
+    throw std::runtime_error("no ble connection (connect from host first)");
+  int sent = 0;
+  for (char c : text) {
+    impl_->stack->hogp().send_input_report({0x00, 0x00, (uint8_t)c, 0, 0, 0, 0, 0});
+    ++sent;
+    impl_->stack->hogp().send_input_report({0, 0, 0, 0, 0, 0, 0, 0});
+  }
+  return "typed " + std::to_string(sent) + " chars";
+}
+
 std::string Simulator::cmd_load_hid_profile(const std::string& json_path) {
   auto prof = hid::HidProfile::load_file(json_path);
   uint32_t devnum = impl_->next_devnum++;
@@ -112,6 +130,8 @@ std::string Simulator::cmd_load_bt_adapter() {
   auto model = std::make_shared<bt::AdapterModel>(pb::hci::ControllerConfig{}, 7, devnum);
   std::string busid = impl_->reg.add(model);
   impl_->bt_models[busid] = model;
+  // 装配 BLE 设备栈（ATT/GATT/HOGP/SMP 绑定到该控制器）
+  impl_->stack = std::make_unique<ble::DeviceStack>(model->controller());
   PB_LOG_INFO("sim: loaded bt adapter as " + busid);
   return busid;
 }

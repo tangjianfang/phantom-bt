@@ -39,6 +39,9 @@ std::vector<std::string> execute(sim::Simulator& sim, const std::string& line) {
     if (cmd == "ble-list") {
       return {"OK", sim.cmd_ble_list(), "OK-END"};
     }
+    if (cmd == "ble-type" && args.size() == 3) {
+      return {"OK " + sim.cmd_ble_type(args[1], args[2])};
+    }
     if (cmd == "list") {
       std::vector<std::string> out;
       std::string l = sim.cmd_list();

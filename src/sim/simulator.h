@@ -26,6 +26,7 @@ class Simulator {
   std::string cmd_ble_advertise(const std::string& json_path);  // → OK <addr>
   std::string cmd_ble_stop(const std::string& addr_hex);
   std::string cmd_ble_list();
+  std::string cmd_ble_type(const std::string& addr_hex, const std::string& text);  // 逐字符两帧
   std::string cmd_list();
   std::string cmd_attach(const std::string& busid);
   std::string cmd_detach(const std::string& busid);
