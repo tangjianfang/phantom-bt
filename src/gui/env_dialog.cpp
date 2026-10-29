@@ -122,10 +122,12 @@ LRESULT CALLBACK dlg_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
       for (size_t i = 0; i < g_checks.size(); ++i) {
         const auto& c = g_checks[i];
         int rh = g_row_h[i];
-        // 状态灯
+        // Status LED (Info is neutral: dim grey, not an error color)
         COLORREF dot = c.status == env::Status::Ok
                            ? ACCENT
-                           : (c.status == env::Status::Warn ? AMBER : DANGER);
+                           : (c.status == env::Status::Warn
+                                  ? AMBER
+                                  : (c.status == env::Status::Info ? TEXT_DIM : DANGER));
         HBRUSH b = CreateSolidBrush(dot);
         HBRUSH ob = (HBRUSH)SelectObject(dc, b);
         int r = scale(5), cx = scale(28), cy = y + scale(17);
@@ -184,13 +186,13 @@ void ensure_class(HINSTANCE inst) {
 
 }  // namespace
 
-void show_env_dialog(HINSTANCE inst, HWND owner) {
+void show_env_dialog(HINSTANCE inst, HWND owner, const std::vector<env::CheckResult>& checks) {
   ensure_class(inst);
   if (g_dlg) {
     SetForegroundWindow(g_dlg);
     return;
   }
-  g_checks = env::run_checks();
+  g_checks = checks.empty() ? env::run_checks() : checks;
   int h = scale(64) + scale(70) * (int)g_checks.size() + scale(64);  // 初始估计，rebuild 校正
   g_dlg = CreateWindowExW(WS_EX_TOOLWINDOW, L"PbCheckDlg", L"phantom-bt · 环境体检",
                           WS_POPUPWINDOW | WS_CAPTION | WS_MINIMIZEBOX, CW_USEDEFAULT,

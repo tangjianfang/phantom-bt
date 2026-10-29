@@ -477,6 +477,9 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                               pad, pad, cw - pad * 2, ch - pad * 2, g_page_log, nullptr,
                               cs->hInstance, nullptr);
       SendMessageW(g_log, WM_SETFONT, (WPARAM)pb::gui::font_mono(), TRUE);
+      // 4 MB cap: lifts the default ~30k silent truncation while still
+      // bounding the buffer (head-trim keeps steady state far below it).
+      SendMessageW(g_log, EM_SETLIMITTEXT, 4 * 1024 * 1024, 0);
 
       // —— 页4：自动测试 ——
       g_test_btn = mkbtn(IDC_BTN_RUNTESTS, L"运行全部测试", pad, pad, pb::gui::scale(140), true,
@@ -497,6 +500,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                    ch - pad * 2 - pb::gui::scale(44), g_page_test, nullptr,
                                    cs->hInstance, nullptr);
       SendMessageW(g_test_out, WM_SETFONT, (WPARAM)pb::gui::font_mono(), TRUE);
+      SendMessageW(g_test_out, EM_SETLIMITTEXT, 4 * 1024 * 1024, 0);
 
       select_page(0);
       refresh_device_list();
@@ -718,7 +722,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     auto checks = pb::env::run_checks();
     if (pb::env::needs_attention(checks)) {
       PB_LOG_INFO("gui: environment needs attention — showing dialog");
-      pb::gui::show_env_dialog(inst, g_main);
+      pb::gui::show_env_dialog(inst, g_main, checks);  // reuse: no double probe
     }
     pb::env::mark_first_run();
   } else {

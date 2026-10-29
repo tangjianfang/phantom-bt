@@ -5,6 +5,7 @@
 #include "core/test_runner.h"
 
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace pb;
@@ -47,8 +48,7 @@ PB_TEST(tr_find_tests_exe_finds_itself) {
 }
 
 PB_TEST(tr_run_capture_lines_and_exit_code) {
-  // Run a harmless child (cmd echo) instead of the test binary itself to
-  // avoid recursion. Verify line callbacks and the exit code.
+  // Harmless child (cmd runs the echo itself; no grandchildren involved).
   std::vector<std::string> lines;
   int rc = testrunner::run_capture("cmd.exe /c echo alpha && echo bravo",
                                    [&](const std::string& l) { lines.push_back(l); });
@@ -68,23 +68,21 @@ PB_TEST(tr_run_capture_exit_code_propagates) {
 }
 
 PB_TEST(tr_run_capture_missing_exe) {
-  // Wrapped in cmd.exe: a missing command makes cmd exit non-zero (1),
-  // not -1 (-1 is only when cmd.exe itself fails to launch).
+  // Direct CreateProcessW: a missing exe means launch failure (-1).
   std::string seen;
   int rc = testrunner::run_capture("definitely-not-a-real-exe-xyz.exe",
                                    [&](const std::string& l) { seen += l + "\n"; });
-  PB_CHECK(rc != 0);
-  PB_CHECK(seen.find("not recognized") != std::string::npos ||
-           seen.find("is not recognized") != std::string::npos || seen.find("'") != std::string::npos);
+  PB_CHECK_EQ(rc, -1);
+  PB_CHECK(seen.empty());
 }
 
 PB_TEST(tr_run_capture_stop_event_cancels) {
   // A long-running child + an already-set stop event must return -2 quickly
-  // (the child gets terminated instead of blocking for its full runtime).
+  // (the whole job is terminated instead of blocking for the full runtime).
   HANDLE stop = CreateEventW(nullptr, FALSE, TRUE, nullptr);  // manual set
   PB_CHECK(stop != nullptr);
   ULONGLONG t0 = GetTickCount64();
-  int rc = testrunner::run_capture("cmd.exe /c ping -n 30 127.0.0.1 >nul", nullptr, stop, 30000);
+  int rc = testrunner::run_capture("ping.exe -n 30 127.0.0.1", nullptr, stop, 30000);
   ULONGLONG dt = GetTickCount64() - t0;
   CloseHandle(stop);
   PB_CHECK_EQ(rc, -2);
@@ -94,8 +92,32 @@ PB_TEST(tr_run_capture_stop_event_cancels) {
 PB_TEST(tr_run_capture_timeout_kills_hung_child) {
   // No stop event: the hard timeout must fire and kill the child.
   ULONGLONG t0 = GetTickCount64();
-  int rc = testrunner::run_capture("cmd.exe /c ping -n 30 127.0.0.1 >nul", nullptr, nullptr, 1500);
+  int rc = testrunner::run_capture("ping.exe -n 30 127.0.0.1", nullptr, nullptr, 1500);
   ULONGLONG dt = GetTickCount64() - t0;
   PB_CHECK_EQ(rc, -2);
   PB_CHECK(dt >= 1400 && dt < 15000);
+}
+
+PB_TEST(tr_run_capture_stop_during_drain) {
+  // Regression: the main child (cmd) exits immediately while its grandchild
+  // (ping) keeps writing into the inherited pipe. The drain loop must still
+  // honor the stop event — otherwise run_capture (and the GUI shutdown join)
+  // hangs until the grandchild exits on its own.
+  HANDLE stop = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+  PB_CHECK(stop != nullptr);
+  std::thread setter([stop] {
+    Sleep(1500);  // let the launching cmd exit first: the run is in drain mode
+    SetEvent(stop);
+  });
+  // The grandchild must emit faster than the ~300ms drain silence threshold,
+  // otherwise the drain loop legitimately finishes before stop fires.
+  ULONGLONG t0 = GetTickCount64();
+  int rc = testrunner::run_capture(
+      "cmd.exe /c start \"\" /b cmd.exe /c for /l %i in (1,1,1000000) do @echo drain-line-%i",
+      nullptr, stop, 60000);
+  ULONGLONG dt = GetTickCount64() - t0;
+  setter.join();
+  CloseHandle(stop);
+  PB_CHECK_EQ(rc, -2);
+  PB_CHECK(dt < 20000);  // cancelled mid-drain, far below the 30s ping runtime
 }

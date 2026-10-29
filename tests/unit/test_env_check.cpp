@@ -14,20 +14,44 @@ PB_TEST(env_os_build_threshold) {
 PB_TEST(env_classify_os) {
   PB_CHECK_EQ(pb::env::classify_os(26100, 10), std::string("Windows 11 (build 26100)"));
   PB_CHECK_EQ(pb::env::classify_os(19045, 10), std::string("Windows 10 (build 19045)"));
+  // Pre-Win10 keeps its real minor version (e.g. Win7 SP1 = 6.1 build 7601).
+  PB_CHECK_EQ(pb::env::classify_os(7601, 6, 1), std::string("Windows 6.1 (build 7601)"));
 }
 
-PB_TEST(env_bt_enum_key_detection) {
-  // 我们自己的 VID 不算内置蓝牙
-  PB_CHECK(!pb::env::looks_like_bt_enum_key("VID_0B00&PID_0001", "VID_0B00"));
-  // 常见蓝牙厂商 VID 算
-  PB_CHECK(pb::env::looks_like_bt_enum_key("VID_8087&PID_0026", "VID_0B00"));   // Intel
-  PB_CHECK(pb::env::looks_like_bt_enum_key("VID_0A12&PID_0001", "VID_0B00"));   // CSR
-  PB_CHECK(pb::env::looks_like_bt_enum_key("VID_0489&PID_E0C8", "VID_0B00"));   // Foxconn
-  // 非蓝牙 VID / 非法键名不算
-  PB_CHECK(!pb::env::looks_like_bt_enum_key("VID_1209&PID_B007", "VID_0B00"));  // 我们 HID
-  PB_CHECK(!pb::env::looks_like_bt_enum_key("ROOT\\usb", "VID_0B00"));
-  PB_CHECK(!pb::env::looks_like_bt_enum_key("", "VID_0B00"));
-  PB_CHECK(!pb::env::looks_like_bt_enum_key("VID_8087", "VID_0B00"));  // 无 &PID 段
+PB_TEST(env_foreign_vid_enum_key) {
+  // Our own virtual adapter never counts.
+  PB_CHECK(!pb::env::foreign_vid_enum_key("VID_0B00&PID_0001", "VID_0B00"));
+  // Any other well-formed VID&PID key is a candidate for the class probe
+  // (BT classification itself is by device class, not by VID whitelist).
+  PB_CHECK(pb::env::foreign_vid_enum_key("VID_0BDA&PID_8153", "VID_0B00"));   // Realtek NIC key
+  PB_CHECK(pb::env::foreign_vid_enum_key("VID_8087&PID_0026", "VID_0B00"));   // Intel BT key
+  // Malformed / non-device keys rejected.
+  PB_CHECK(!pb::env::foreign_vid_enum_key("VID_1209&PID_B007", "VID_1209"));  // our HID VID
+  PB_CHECK(!pb::env::foreign_vid_enum_key("ROOT\\usb", "VID_0B00"));
+  PB_CHECK(!pb::env::foreign_vid_enum_key("", "VID_0B00"));
+  PB_CHECK(!pb::env::foreign_vid_enum_key("VID_8087", "VID_0B00"));  // no &PID part
+}
+
+// Class-E0 detection keys on the Bluetooth subclass, never on vendor.
+PB_TEST(env_class_e0_compatid) {
+  auto mksz = [](std::vector<std::string> parts) {
+    std::string s;
+    for (auto& p : parts) s += p + std::string(1, '\0');
+    return s += '\0';  // double-NUL terminator
+  };
+  PB_CHECK(pb::env::has_class_e0_compatid(
+      mksz({"USB\\Class_E0&SubClass_01&Prot_01", "USB\\DEV"}).c_str()));
+  PB_CHECK(pb::env::has_class_e0_compatid(
+      mksz({"USB\\Class_e0&Subclass_01&Prot_01"}).c_str()));  // case-insensitive
+  // SubClass_02 is UWB / Certified Wireless USB — not Bluetooth.
+  PB_CHECK(!pb::env::has_class_e0_compatid(
+      mksz({"USB\\Class_E0&SubClass_02"}).c_str()));
+  PB_CHECK(!pb::env::has_class_e0_compatid(
+      mksz({"USB\\Class_E0"}).c_str()));  // bare class without SubClass_01
+  PB_CHECK(!pb::env::has_class_e0_compatid(
+      mksz({"USB\\Class_09&Prot_01", "USB\\VID_0BDA&PID_8153"}).c_str()));  // hub / NIC
+  PB_CHECK(!pb::env::has_class_e0_compatid(mksz({}).c_str()));
+  PB_CHECK(!pb::env::has_class_e0_compatid(nullptr));
 }
 
 PB_TEST(env_urls_not_empty) {
@@ -45,7 +69,11 @@ PB_TEST(env_run_checks_shape) {
     PB_CHECK(!c.id.empty());
     if (c.id == "os") {
       has_os = true;
-      PB_CHECK_EQ((int)c.status, (int)pb::env::Status::Ok);  // 本机 Win11 必过
+      // Status must agree with the machine's actual build (the suite may run
+      // on pre-1903 VMs where the Fail branch is the correct answer).
+      bool ok_expected = pb::env::os_build_ok(pb::env::windows_build());
+      PB_CHECK_EQ((int)c.status, (int)(ok_expected ? pb::env::Status::Ok
+                                                   : pb::env::Status::Fail));
     }
     if (c.id == "usbip_exe") has_usbip = true;
     if (c.id == "admin") has_admin = true;

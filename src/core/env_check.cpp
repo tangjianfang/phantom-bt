@@ -7,19 +7,41 @@
 #include <windows.h>
 #include <iphlpapi.h>
 
+#include "core/bytes.h"
+
 namespace pb::env {
 
+// Any "USB\Class_E0&SubClass_01*" entry in a REG_MULTI_SZ CompatibleIDs blob
+// marks a Bluetooth transport. SubClass must be pinned to 01: bare Class_E0
+// also covers SubClass_02 (UWB / Certified Wireless USB) false positives.
+bool has_class_e0_compatid(const char* multi_sz) {
+  if (!multi_sz) return false;
+  static constexpr char kSig[] = "USB\\Class_E0&SubClass_01";  // length derived
+  for (const char* p = multi_sz; *p; p += strlen(p) + 1)
+    if (_strnicmp(p, kSig, sizeof(kSig) - 1) == 0) return true;
+  return false;
+}
+
+std::string usbip_download_url() { return "https://github.com/vadimgrn/usbip-win2/releases"; }
+std::string usbip_docs_url() { return "https://github.com/vadimgrn/usbip-win2#readme"; }
+
+bool os_build_ok(uint32_t build_number) { return build_number >= 18362; }
+
 namespace {
-// 常见蓝牙适配器 USB VID（内置网卡/dongle 厂商子集，用于 R-110 检测）
+// Known Bluetooth radio vendors — the SECOND detection axis. The class probe
+// (Service/Class/CompatibleIDs) is authoritative, but vendor-specific radios
+// (recovery firmware, off-spec CSR clones) expose no E0/01 descriptors; the
+// VID list keeps those detectable.
 bool known_bt_vid(const std::string& vid) {
   static const char* kVids[] = {
       "VID_0A12",  // Cambridge Silicon Radio (CSR)
-      "VID_8087",  // Intel 蓝牙
+      "VID_0A5C",  // Broadcom
+      "VID_8087",  // Intel
       "VID_0489",  // Foxconn / MediaTek
       "VID_0B05",  // ASUS
       "VID_04CA",  // IMC Networks
       "VID_13D3",  // IMC Networks
-      "VID_0BB4",  // HTC (部分 dongle)
+      "VID_0BB4",  // HTC
       "VID_050D",  // Belkin
       "VID_1286",  // Marvell
       "VID_2357",  // TP-Link
@@ -32,28 +54,21 @@ bool known_bt_vid(const std::string& vid) {
 }
 }  // namespace
 
-std::string usbip_download_url() { return "https://github.com/vadimgrn/usbip-win2/releases"; }
-std::string usbip_docs_url() { return "https://github.com/vadimgrn/usbip-win2#readme"; }
-
-bool os_build_ok(uint32_t build_number) { return build_number >= 18362; }
-
-bool looks_like_bt_enum_key(const std::string& key, const std::string& our_vid) {
+bool foreign_vid_enum_key(const std::string& key, const std::string& our_vid) {
   if (key.rfind("VID_", 0) != 0) return false;
   size_t amp = key.find('&');
   if (amp == std::string::npos) return false;
-  std::string vid = key.substr(0, amp);  // VID_XXXX
-  if (vid == our_vid) return false;      // 我们自己的虚拟适配器不算
-  return known_bt_vid(vid);
+  return key.substr(0, amp) != our_vid;  // our own virtual adapter excluded
 }
 
-std::string classify_os(uint32_t build, uint32_t major) {
+std::string classify_os(uint32_t build, uint32_t major, uint32_t minor) {
   char buf[96];
   if (major >= 10 && build >= 22000)
     std::snprintf(buf, sizeof(buf), "Windows 11 (build %u)", build);
   else if (major >= 10)
     std::snprintf(buf, sizeof(buf), "Windows 10 (build %u)", build);
   else
-    std::snprintf(buf, sizeof(buf), "Windows %u.%u (build %u)", major, 0u, build);
+    std::snprintf(buf, sizeof(buf), "Windows %u.%u (build %u)", major, minor, build);
   return buf;
 }
 
@@ -71,6 +86,16 @@ bool rtl_get_version(RTL_OSVERSIONINFOW* out) {
   return true;
 }
 }  // namespace
+
+std::wstring exe_dir() {
+  wchar_t self[1024];
+  DWORD n = GetModuleFileNameW(nullptr, self, 1024);
+  if (n == 0 || n >= 1024) return L"";  // failure or truncated path
+  std::wstring dir(self, n);
+  size_t slash = dir.find_last_of(L'\\');
+  if (slash == std::wstring::npos) return L"";
+  return dir.substr(0, slash + 1);  // trailing backslash included
+}
 
 uint32_t windows_build() {
   RTL_OSVERSIONINFOW vi = {};
@@ -113,30 +138,54 @@ std::string find_usbip_exe() {
 }
 
 bool file_next_to_exe(const char* name) {
-  wchar_t self[MAX_PATH];
-  if (!GetModuleFileNameW(nullptr, self, MAX_PATH)) return false;
-  std::wstring dir(self);
-  size_t slash = dir.find_last_of(L'\\');
-  if (slash == std::wstring::npos) return false;
-  dir.resize(slash + 1);
-  std::wstring full = dir + L"\\" + std::wstring(name, name + strlen(name));
-  full.erase(dir.size(), 1);  // 去掉重复分隔（dir 已含 '\'）
-  return GetFileAttributesW(full.c_str()) != INVALID_FILE_ATTRIBUTES;
+  std::wstring dir = exe_dir();
+  if (dir.empty()) return false;  // fail closed — never probe the CWD instead
+  return GetFileAttributesW((dir + pb::to_w(name)).c_str()) != INVALID_FILE_ATTRIBUTES;
 }
 
 namespace {
+// Authoritative Bluetooth signals on an Enum\USB instance key. VID whitelists
+// misfire on multi-product vendors (Realtek NICs, MediaTek Wi-Fi dongles), so
+// classify by device class instead.
+bool instance_is_bluetooth(HKEY ik) {
+  auto sz_is = [&](const char* name, const char* expect) {
+    char buf[128] = {};
+    DWORD len = sizeof(buf) - 1, type = 0;  // -1: room to force NUL termination
+    LONG rc = RegQueryValueExA(ik, name, nullptr, &type, (LPBYTE)buf, &len);
+    if (rc != ERROR_SUCCESS && rc != ERROR_MORE_DATA) return false;
+    buf[len < sizeof(buf) ? len : sizeof(buf) - 1] = '\0';
+    return type == REG_SZ && _stricmp(buf, expect) == 0;
+  };
+  if (sz_is("Service", "BTHUSB") || sz_is("Class", "Bluetooth")) return true;
+  // CompatibleIDs: query on the stack buffer; on overflow re-read once into a
+  // heap buffer sized from the reported length. Only a fully successful read
+  // is parsed (a second MORE_DATA means the value is still growing — parsing
+  // a truncated list could silently drop the Class_E0 entry).
+  char buf[1024];
+  DWORD len = sizeof(buf) - 1, type = 0;
+  LONG rc = RegQueryValueExA(ik, "CompatibleIDs", nullptr, &type, (LPBYTE)buf, &len);
+  if (rc == ERROR_MORE_DATA) {
+    std::vector<char> big(len + 1);
+    DWORD need = (DWORD)big.size();
+    if (RegQueryValueExA(ik, "CompatibleIDs", nullptr, &type, (LPBYTE)big.data(), &need) !=
+        ERROR_SUCCESS)
+      return false;
+    big[big.size() - 1] = '\0';
+    return type == REG_MULTI_SZ && has_class_e0_compatid(big.data());
+  }
+  if (rc != ERROR_SUCCESS) return false;
+  buf[len < sizeof(buf) ? len : sizeof(buf) - 1] = '\0';
+  return type == REG_MULTI_SZ && has_class_e0_compatid(buf);
+}
+
 // An Enum\USB device key stays present after the device is disabled in Device
 // Manager, so key existence alone can never turn green again. An instance is
 // "active" unless its ConfigFlags has CONFIGFLAG_DISABLED (0x1) set.
-bool instance_active(HKEY vid_key, const char* instance) {
-  HKEY ik;
-  if (RegOpenKeyExA(vid_key, instance, 0, KEY_READ, &ik) != ERROR_SUCCESS) return true;
+bool instance_active(HKEY ik) {
   DWORD flags = 0, size = sizeof(flags), type = 0;
-  bool disabled = RegQueryValueExA(ik, "ConfigFlags", nullptr, &type, (LPBYTE)&flags, &size) ==
-                      ERROR_SUCCESS &&
-                  type == REG_DWORD && (flags & 0x1);
-  RegCloseKey(ik);
-  return !disabled;
+  return !(RegQueryValueExA(ik, "ConfigFlags", nullptr, &type, (LPBYTE)&flags, &size) ==
+               ERROR_SUCCESS &&
+           type == REG_DWORD && (flags & 0x1));
 }
 }  // namespace
 
@@ -150,23 +199,32 @@ bool builtin_bluetooth_present(const std::string& our_vid) {
     DWORD len = sizeof(sub);
     if (RegEnumKeyExA(key, i, sub, &len, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS)
       break;
-    if (!looks_like_bt_enum_key(std::string(sub, len), our_vid)) continue;
-    // At least one non-disabled instance counts as present.
+    std::string devkey(sub, len);
+    if (!foreign_vid_enum_key(devkey, our_vid)) continue;
+    size_t amp = devkey.find('&');
+    bool vid_known_bt = known_bt_vid(devkey.substr(0, amp));  // second axis
     HKEY vk;
     if (RegOpenKeyExA(key, sub, 0, KEY_READ, &vk) != ERROR_SUCCESS) continue;
     char inst[256];
-    bool any_active = false;
-    for (DWORD j = 0;; ++j) {
+    bool found = false;
+    for (DWORD j = 0; !found; ++j) {
       DWORD ilen = sizeof(inst);
       if (RegEnumKeyExA(vk, j, inst, &ilen, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS)
         break;
-      if (instance_active(vk, inst)) {
-        any_active = true;
-        break;
+      HKEY ik;
+      if (RegOpenKeyExA(vk, inst, 0, KEY_READ, &ik) != ERROR_SUCCESS) {
+        // Fail conservative ONLY for known-BT vendors: a missed radio corrupts
+        // acceptance; for unknown vendors an unreadable key (usually an unplug
+        // race on some unrelated device) must not fake a BT warning.
+        if (vid_known_bt) found = true;
+        continue;
       }
+      bool is_bt = instance_is_bluetooth(ik) || vid_known_bt;
+      found = is_bt && instance_active(ik);
+      RegCloseKey(ik);
     }
     RegCloseKey(vk);
-    if (any_active) {
+    if (found) {
       RegCloseKey(key);
       return true;
     }
@@ -208,7 +266,8 @@ std::vector<CheckResult> run_checks() {
     r.id = "os";
     r.title = "操作系统版本";
     uint32_t build = have_ver ? vi.dwBuildNumber : 0;
-    r.detail = classify_os(build, have_ver ? vi.dwMajorVersion : 0);
+    r.detail = classify_os(build, have_ver ? vi.dwMajorVersion : 0,
+                           have_ver ? vi.dwMinorVersion : 0);
     if (os_build_ok(build)) {
       r.status = Status::Ok;
     } else {
