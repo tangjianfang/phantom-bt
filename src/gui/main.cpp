@@ -625,7 +625,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       sy += pb::gui::scale(96);
       HWND bredr = nullptr;
       mksec(sy, L"经典蓝牙（BR/EDR profile）", &bredr,
-            L"评估中——HID over L2CAP 需补 BR/EDR 连接接受与 PSM 0x11/0x13 信令，规划中");
+            L"已评估：暂未实现——缺 BR/EDR 链路接受、L2CAP 动态通道与 SDP；建议先做 HID over L2CAP（详见 docs/br-edr-assessment.md）");
 
       select_page(0);
       refresh_device_list();
