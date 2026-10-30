@@ -40,6 +40,7 @@ enum CtrlId {
   IDC_NAV_BLE = 11,
   IDC_NAV_LOG = 12,
   IDC_NAV_TEST = 13,
+  IDC_NAV_SETTINGS = 14,
   IDC_BTN_LOAD_HID = 101,
   IDC_BTN_LOAD_BT = 102,
   IDC_BTN_ATTACH = 103,
@@ -52,13 +53,22 @@ enum CtrlId {
   IDC_BTN_TYPE = 204,
   IDC_BTN_RUNTESTS = 301,
   IDC_BTN_ENVCHECK = 302,
+  IDC_BTN_SYSBT_OFF = 401,
+  IDC_BTN_SYSBT_ON = 402,
+  IDC_BTN_VBT_ADD = 403,
+  IDC_BTN_VBT_CLEAR = 404,
+  IDC_BTN_BLE_ADD = 405,
+  IDC_BTN_BLE_CLEAR = 406,
 };
 
 pb::sim::Simulator g_sim;
 pb::control::PipeServer* g_pipe = nullptr;
 HWND g_main = nullptr;
-HWND g_nav_dev = nullptr, g_nav_ble = nullptr, g_nav_log = nullptr, g_nav_test = nullptr;
-HWND g_page_dev = nullptr, g_page_ble = nullptr, g_page_log = nullptr, g_page_test = nullptr;
+HWND g_nav_dev = nullptr, g_nav_ble = nullptr, g_nav_log = nullptr, g_nav_test = nullptr,
+     g_nav_settings = nullptr;
+HWND g_page_dev = nullptr, g_page_ble = nullptr, g_page_log = nullptr, g_page_test = nullptr,
+     g_page_settings = nullptr;
+HWND g_gs_sysbt = nullptr, g_gs_vbt = nullptr, g_gs_ble = nullptr;  // status lines
 HWND g_list = nullptr, g_inject_edit = nullptr, g_empty_lbl = nullptr;
 HWND g_ble_list = nullptr, g_type_edit = nullptr, g_log = nullptr;
 HWND g_test_out = nullptr, g_test_status = nullptr, g_test_btn = nullptr;
@@ -96,11 +106,51 @@ void select_page(int idx) {
   SendMessageW(g_nav_ble, pb::gui::PB_NAV_SELECT, idx == 1, 0);
   SendMessageW(g_nav_log, pb::gui::PB_NAV_SELECT, idx == 2, 0);
   SendMessageW(g_nav_test, pb::gui::PB_NAV_SELECT, idx == 3, 0);
+  SendMessageW(g_nav_settings, pb::gui::PB_NAV_SELECT, idx == 4, 0);
   ShowWindow(g_page_dev, idx == 0 ? SW_SHOW : SW_HIDE);
   ShowWindow(g_page_ble, idx == 1 ? SW_SHOW : SW_HIDE);
   ShowWindow(g_page_log, idx == 2 ? SW_SHOW : SW_HIDE);
   ShowWindow(g_page_test, idx == 3 ? SW_SHOW : SW_HIDE);
+  ShowWindow(g_page_settings, idx == 4 ? SW_SHOW : SW_HIDE);
   InvalidateRect(g_main, nullptr, TRUE);
+}
+
+// —— 全局设置页 ——
+
+// Refresh the three live status lines from the bench.
+void gs_refresh() {
+  if (!g_gs_sysbt) return;
+  auto sysbt = pb::control::execute(g_sim, "sys-bt list");
+  int radios = 0, disabled = 0, elevated = pb::env::is_admin();
+  for (auto& l : sysbt) {
+    if (l.find("RADIO") != std::string::npos) {
+      ++radios;
+      if (l.find("[disabled]") != std::string::npos) ++disabled;
+    }
+  }
+  std::wstring s1 = radios == 0 ? L"未检测到物理蓝牙适配器"
+                                : L"检测到 " + std::to_wstring(radios) + L" 个物理适配器（" +
+                                      std::to_wstring(disabled) + L" 个已禁用）";
+  s1 += elevated ? L"" : L" · 禁用/启用需以管理员身份运行";
+  SetWindowTextW(g_gs_sysbt, s1.c_str());
+
+  int devs = 0;
+  for (auto& l : pb::control::execute(g_sim, "list"))
+    if (l.rfind("DEV ", 0) == 0) ++devs;
+  int bts = 0;
+  {
+    auto rows = pb::control::execute(g_sim, "list");
+    for (auto& l : rows)
+      if (l.rfind("DEV ", 0) == 0 && l.find("0b00:") != std::string::npos) ++bts;
+  }
+  SetWindowTextW(g_gs_vbt,
+                 (bts == 0 ? L"未加载" : L"已加载 " + std::to_wstring(bts) + L" 个").c_str());
+
+  int bles = 0;
+  for (auto& l : pb::control::execute(g_sim, "ble-list"))
+    if (!l.empty() && l != "OK" && l != "OK-END") ++bles;
+  SetWindowTextW(g_gs_ble, (bles == 0 ? L"无广播中的设备" : std::to_wstring(bles) + L" 个设备广播中")
+                               .c_str());
 }
 
 // —— 自动测试页 ——
@@ -250,9 +300,42 @@ void on_command(int id) {
     case IDC_NAV_BLE: select_page(1); return;
     case IDC_NAV_LOG: select_page(2); return;
     case IDC_NAV_TEST: select_page(3); return;
+    case IDC_NAV_SETTINGS: select_page(4); return;
     case IDC_BTN_RUNTESTS: start_auto_tests(); return;
     case IDC_BTN_ENVCHECK:
       pb::gui::show_env_dialog((HINSTANCE)GetWindowLongPtrW(g_main, GWLP_HINSTANCE), g_main);
+      return;
+    case IDC_BTN_SYSBT_OFF:
+      run_and_show("sys-bt disable");
+      gs_refresh();
+      return;
+    case IDC_BTN_SYSBT_ON:
+      run_and_show("sys-bt enable");
+      gs_refresh();
+      return;
+    case IDC_BTN_VBT_ADD:
+      run_and_show("load-bt");
+      refresh_device_list();
+      gs_refresh();
+      return;
+    case IDC_BTN_VBT_CLEAR:
+      run_and_show("unload-all");
+      refresh_device_list();
+      gs_refresh();
+      return;
+    case IDC_BTN_BLE_ADD: {
+      auto f = pick_file();
+      if (!f.empty()) {
+        run_and_show("ble-advertise " + f);
+        refresh_ble_list();
+        gs_refresh();
+      }
+      return;
+    }
+    case IDC_BTN_BLE_CLEAR:
+      run_and_show("ble-clear");
+      refresh_ble_list();
+      gs_refresh();
       return;
   }
   switch (id) {
@@ -386,6 +469,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       g_nav_ble = mknav(IDC_NAV_BLE, L"BLE 设备", apph + pb::gui::scale(58));
       g_nav_log = mknav(IDC_NAV_LOG, L"日志", apph + pb::gui::scale(102));
       g_nav_test = mknav(IDC_NAV_TEST, L"自动测试", apph + pb::gui::scale(146));
+      g_nav_settings = mknav(IDC_NAV_SETTINGS, L"全局设置", apph + pb::gui::scale(190));
 
       RECT rc;
       GetClientRect(hwnd, &rc);
@@ -400,6 +484,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       g_page_ble = mkpage(2);
       g_page_log = mkpage(3);
       g_page_test = mkpage(4);
+      g_page_settings = mkpage(5);
 
       int pad = pb::gui::scale(pb::gui::PAD);
       auto mkbtn = [&](int id, const wchar_t* text, int x, int y, int w, bool primary, HWND parent) {
@@ -507,8 +592,44 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       SendMessageW(g_test_out, WM_SETFONT, (WPARAM)pb::gui::font_mono(), TRUE);
       SendMessageW(g_test_out, EM_SETLIMITTEXT, 4 * 1024 * 1024, 0);
 
+      // —— 页5：全局设置 ——（四块：真实 radio / 虚拟适配器 / BLE / 经典蓝牙）
+      auto mksec = [&](int y, const wchar_t* title, HWND* status, const wchar_t* status_text) {
+        HWND t = CreateWindowExW(0, L"STATIC", title, WS_CHILD | WS_VISIBLE, pad, y, cw - pad * 2,
+                                 pb::gui::scale(22), g_page_settings, nullptr, cs->hInstance,
+                                 nullptr);
+        SendMessageW(t, WM_SETFONT, (WPARAM)pb::gui::font_ui_bold(), TRUE);
+        *status = CreateWindowExW(0, L"STATIC", status_text, WS_CHILD | WS_VISIBLE, pad + pb::gui::scale(16),
+                                  y + pb::gui::scale(24), cw - pad * 2 - pb::gui::scale(16),
+                                  pb::gui::scale(20), g_page_settings, nullptr, cs->hInstance,
+                                  nullptr);
+        SendMessageW(*status, WM_SETFONT, (WPARAM)pb::gui::font_ui(), TRUE);
+      };
+      int sy = pad;
+      mksec(sy, L"真实蓝牙适配器（禁用后重启系统蓝牙栈自动恢复）", &g_gs_sysbt, L"检测中…");
+      mkbtn(IDC_BTN_SYSBT_OFF, L"禁用", cw - pad - pb::gui::scale(96), sy + pb::gui::scale(50),
+            pb::gui::scale(88), true, g_page_settings);
+      mkbtn(IDC_BTN_SYSBT_ON, L"启用", cw - pad - pb::gui::scale(96) * 2 - pad,
+            sy + pb::gui::scale(50), pb::gui::scale(88), false, g_page_settings);
+      sy += pb::gui::scale(96);
+      mksec(sy, L"虚拟蓝牙适配器", &g_gs_vbt, L"检测中…");
+      mkbtn(IDC_BTN_VBT_ADD, L"添加", cw - pad - pb::gui::scale(96), sy + pb::gui::scale(50),
+            pb::gui::scale(88), true, g_page_settings);
+      mkbtn(IDC_BTN_VBT_CLEAR, L"清理", cw - pad - pb::gui::scale(96) * 2 - pad,
+            sy + pb::gui::scale(50), pb::gui::scale(88), false, g_page_settings);
+      sy += pb::gui::scale(96);
+      mksec(sy, L"BLE 设备", &g_gs_ble, L"检测中…");
+      mkbtn(IDC_BTN_BLE_ADD, L"添加（广播）", cw - pad - pb::gui::scale(128),
+            sy + pb::gui::scale(50), pb::gui::scale(120), true, g_page_settings);
+      mkbtn(IDC_BTN_BLE_CLEAR, L"清理", cw - pad - pb::gui::scale(128) - pb::gui::scale(96) - pad,
+            sy + pb::gui::scale(50), pb::gui::scale(88), false, g_page_settings);
+      sy += pb::gui::scale(96);
+      HWND bredr = nullptr;
+      mksec(sy, L"经典蓝牙（BR/EDR profile）", &bredr,
+            L"评估中——HID over L2CAP 需补 BR/EDR 连接接受与 PSM 0x11/0x13 信令，规划中");
+
       select_page(0);
       refresh_device_list();
+      gs_refresh();
       break;
     }
     case WM_COMMAND:
@@ -635,6 +756,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       MoveWindow(g_page_ble, px, py, cw, ch, TRUE);
       MoveWindow(g_page_log, px, py, cw, ch, TRUE);
       MoveWindow(g_page_test, px, py, cw, ch, TRUE);
+      MoveWindow(g_page_settings, px, py, cw, ch, TRUE);
       if (g_test_out)
         MoveWindow(g_test_out, pad, pad + pb::gui::scale(44), cw - pad * 2,
                    ch - pad * 2 - pb::gui::scale(44), TRUE);
