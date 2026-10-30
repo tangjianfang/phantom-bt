@@ -330,6 +330,11 @@ void on_command(int id) {
 // 页面容器：深色表面 + 子控件配色
 LRESULT CALLBACK page_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
   switch (msg) {
+    case WM_COMMAND:
+      // Buttons live on the page (not the main window), and WM_COMMAND does
+      // NOT bubble automatically — forward to the main window or every
+      // in-page button click is silently dropped.
+      return SendMessageW(GetParent(h), WM_COMMAND, wp, lp);
     case WM_ERASEBKGND:
       return 1;
     case WM_PAINT: {
