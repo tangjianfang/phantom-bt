@@ -5,6 +5,7 @@
 
 #include <windows.h>
 
+#include "core/bt_radio.h"
 #include "core/bytes.h"
 #include "core/log.h"
 #include "core/net.h"
@@ -90,6 +91,15 @@ std::string Simulator::cmd_ble_stop(const std::string& addr_hex) {
   return "stopped";
 }
 
+std::string Simulator::cmd_ble_clear() {
+  auto* ad = impl_->adapter_for_ble();
+  size_t n = impl_->ble_devices.size();
+  if (ad)
+    for (auto& [addr, def] : impl_->ble_devices) ad->controller().air().remove(addr);
+  impl_->ble_devices.clear();
+  return "cleared " + std::to_string(n) + " ble device(s)";
+}
+
 std::string Simulator::cmd_ble_list() {
   std::string out;
   for (auto& [addr, def] : impl_->ble_devices) {
@@ -155,6 +165,63 @@ std::string Simulator::cmd_list() {
     out += line;
   }
   return out;
+}
+
+std::string Simulator::cmd_unload(const std::string& busid) {
+  if (!impl_->reg.find(busid)) throw std::runtime_error("unknown busid " + busid);
+  bool was_bt = impl_->bt_models.count(busid) > 0;
+  // Best-effort detach first, so no usbip client still references the model.
+  try {
+    (void)cmd_detach(busid);
+  } catch (...) {
+  }
+  impl_->reg.remove(busid);
+  impl_->hid_models.erase(busid);
+  impl_->bt_models.erase(busid);
+  if (was_bt) {
+    // BLE devices hang off this adapter's air — they must go with it.
+    (void)cmd_ble_clear();
+    impl_->stack.reset();
+    if (auto* ad = impl_->adapter_for_ble())  // another adapter remains: rewire
+      impl_->stack = std::make_unique<ble::DeviceStack>(ad->controller());
+  }
+  PB_LOG_INFO("sim: unloaded " + busid);
+  return "unloaded " + busid;
+}
+
+std::string Simulator::cmd_unload_all() {
+  auto devs = impl_->reg.list();
+  int n = 0;
+  for (auto& d : devs) {
+    try {
+      (void)cmd_unload(d.busid);
+      ++n;
+    } catch (...) {
+    }
+  }
+  return "unloaded " + std::to_string(n) + " device(s)";
+}
+
+std::string Simulator::cmd_sys_bt(const std::string& op) {
+  if (op == "list") {
+    auto radios = btradio::list_radios();
+    if (radios.empty()) return "no physical bluetooth radio found";
+    std::string out;
+    for (auto& r : radios) {
+      if (!out.empty()) out += "\n";
+      out += std::string(r.disabled ? "[disabled] " : "[enabled]  ") +
+             (r.physical ? "RADIO " : "child  ") + r.description + " (" + r.instance_id + ")";
+    }
+    return out;
+  }
+  if (op != "disable" && op != "enable")
+    throw std::runtime_error("usage: sys-bt <list|disable|enable>");
+  std::string err;
+  int n = btradio::set_radios_enabled(op == "enable", &err);
+  if (n == 0)
+    throw std::runtime_error(err.empty() ? "no radio changed (admin required?)" : err);
+  return (op == "enable" ? "enabled " : "disabled ") + std::to_string(n) + " radio(s)" +
+         (err.empty() ? "" : " (" + err + ")");
 }
 
 std::string Simulator::find_usbip_exe() {

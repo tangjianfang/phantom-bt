@@ -29,6 +29,11 @@ bool is_our_virtual(const std::string& instance_id) {
   return upper.find(kOurVid) != std::string::npos;
 }
 
+bool is_physical_radio_id(const std::string& instance_id) {
+  return instance_id.size() >= 4 &&
+         (instance_id.compare(0, 4, "USB\\") == 0 || instance_id.compare(0, 4, "usb\\") == 0);
+}
+
 std::vector<RadioDevice> list_radios() {
   std::vector<RadioDevice> out;
   HDEVINFO set = SetupDiGetClassDevs(&GUID_DEVCLASS_BLUETOOTH, nullptr, nullptr,
@@ -44,6 +49,7 @@ std::vector<RadioDevice> list_radios() {
 
     RadioDevice r;
     r.instance_id = instance;
+    r.physical = is_physical_radio_id(instance);
     char name[256] = {};
     DWORD n = 0, type = 0;
     if (SetupDiGetDeviceRegistryPropertyA(set, &di, SPDRP_FRIENDLYNAME, &type,
@@ -64,7 +70,10 @@ std::vector<RadioDevice> list_radios() {
 }
 
 int set_radios_enabled(bool enable, std::string* err) {
-  auto radios = list_radios();
+  auto all = list_radios();
+  std::vector<RadioDevice> radios;
+  for (auto& r : all)
+    if (r.physical) radios.push_back(r);  // never toggle stack/paired sub-nodes
   if (radios.empty()) {
     if (err) *err = "no physical bluetooth radio found";
     return 0;

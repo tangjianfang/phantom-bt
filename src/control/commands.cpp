@@ -7,8 +7,10 @@
 namespace pb::control {
 
 std::string usage() {
-  return "commands: load-hid <json> | list | attach <busid> | detach <busid> | "
-         "inject <busid> <hex> | status | help";
+  return "commands: load-hid <json> | load-bt | unload <busid> | unload-all | list | "
+         "attach <busid> | detach <busid> | inject <busid> <hex> | ble-advertise <json> | "
+         "ble-stop <addr> | ble-clear | ble-list | ble-type <addr> <text> | "
+         "sys-bt <list|disable|enable> | status | help";
 }
 
 static std::vector<std::string> split(const std::string& line) {
@@ -30,11 +32,29 @@ std::vector<std::string> execute(sim::Simulator& sim, const std::string& line) {
     if (cmd == "load-bt") {
       return {"OK " + sim.cmd_load_bt_adapter()};
     }
+    if (cmd == "unload" && args.size() == 2) {
+      return {"OK " + sim.cmd_unload(args[1])};
+    }
+    if (cmd == "unload-all") {
+      return {"OK " + sim.cmd_unload_all()};
+    }
     if (cmd == "ble-advertise" && args.size() == 2) {
       return {sim.cmd_ble_advertise(args[1])};
     }
     if (cmd == "ble-stop" && args.size() == 2) {
       return {"OK " + sim.cmd_ble_stop(args[1])};
+    }
+    if (cmd == "ble-clear") {
+      return {"OK " + sim.cmd_ble_clear()};
+    }
+    if (cmd == "sys-bt" && args.size() == 2) {
+      std::vector<std::string> out{"OK"};
+      std::istringstream ss(sim.cmd_sys_bt(args[1]));
+      std::string row;
+      while (std::getline(ss, row))
+        if (!row.empty()) out.push_back(row);
+      out.push_back("OK-END");
+      return out;
     }
     if (cmd == "ble-list") {
       return {"OK", sim.cmd_ble_list(), "OK-END"};

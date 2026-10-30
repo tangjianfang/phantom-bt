@@ -12,6 +12,7 @@
 #include <windows.h>
 
 #include "control/commands.h"
+#include "control/pipe_server.h"
 #include "core/bytes.h"
 #include "core/env_check.h"
 #include "core/net.h"
@@ -41,6 +42,9 @@ int run_serve(const std::vector<std::string>& loads, bool load_bt,
     return 1;
   }
   std::fprintf(stderr, "phantombt: usbip server on port %u\n", (unsigned)sim.port());
+  // Same control pipe as the GUI, so "phantombt cmd ..." can drive serve too.
+  pb::control::PipeServer pipe(sim);
+  pipe.start(&err);
 
   std::vector<std::string> busids;
   for (auto& p : loads) {
@@ -98,6 +102,7 @@ int run_serve(const std::vector<std::string>& loads, bool load_bt,
     while (g_run) Sleep(200);
   }
   sim.stop();
+  pipe.stop();
   return probe_rc;
 }
 
@@ -211,6 +216,17 @@ int main(int argc, char** argv) {
   }
   std::string cmd = argv[1];
   if (cmd == "selftest") return run_selftest();
+
+  if (cmd == "cmd" && argc >= 3) {
+    // Send one control command to a running test bench (GUI or serve).
+    std::vector<std::string> replies;
+    if (!pb::control::CommandClient::send_line("\\\\.\\pipe\\phantom-bt", argv[2], replies, 3000)) {
+      std::fprintf(stderr, "no test bench is running (pipe \\\\.\\pipe\\phantom-bt)\n");
+      return 1;
+    }
+    for (auto& r : replies) std::printf("%s\n", r.c_str());
+    return 0;
+  }
 
   if (cmd == "doctor") {
     auto checks = pb::env::run_checks();

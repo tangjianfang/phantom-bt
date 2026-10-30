@@ -26,9 +26,15 @@ class Simulator {
   std::string cmd_load_bt_adapter();
   std::string cmd_ble_advertise(const std::string& json_path);  // → OK <addr>
   std::string cmd_ble_stop(const std::string& addr_hex);
+  std::string cmd_ble_clear();  // stop every BLE advertiser
   std::string cmd_ble_list();
   std::string cmd_ble_type(const std::string& addr_hex, const std::string& text);  // 逐字符两帧
   std::string cmd_list();
+  std::string cmd_unload(const std::string& busid);  // detach + drop the device model
+  std::string cmd_unload_all();
+  // Physical radio control (SetupAPI): "list" | "disable" | "enable".
+  // State changes require elevation; throws with the reason on failure.
+  std::string cmd_sys_bt(const std::string& op);
   std::string cmd_attach(const std::string& busid);
   std::string cmd_detach(const std::string& busid);
   std::string cmd_inject(const std::string& busid, const std::vector<uint8_t>& report);
