@@ -17,6 +17,7 @@ add_library(phantom_core STATIC
   control/pipe_server.cpp
   core/env_check.cpp
   core/test_runner.cpp
+  core/bt_radio.cpp
   hci/packets.h
   hci/controller.cpp
   hci/le_air.cpp
@@ -56,7 +57,7 @@ if(NOT _pb_cppwinrt STREQUAL "")
 else()
   message(STATUS "winrt-probe: cppwinrt headers not found; target skipped")
 endif()
-target_link_libraries(phantom_core PUBLIC ws2_32 advapi32 iphlpapi)
+target_link_libraries(phantom_core PUBLIC ws2_32 advapi32 iphlpapi setupapi cfgmgr32)
 target_include_directories(phantom_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(phantombt-gui WIN32 gui/main.cpp gui/theme.cpp gui/env_dialog.cpp
