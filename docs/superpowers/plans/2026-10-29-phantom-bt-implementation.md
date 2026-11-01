@@ -1256,7 +1256,7 @@ class AdapterModel : public pb::usb::IUsbDeviceModel {
 ```
 **USB 形态（Task 8 的 descriptor builder 组装）：**
 - 设备描述符：class=0xE0 subclass=0x01 protocol=0x01，bcdUSB=0x0200? 用 0x0110（FS 蓝牙惯例）——**取 0x0110**；bMaxPacketSize0=64。
-- 配置 = 2 接口无 IAD（单功能）：if0 alt0 class E0/01/01：EP 0x81 INT IN 16/1ms + 0x02 BULK OUT 64 + 0x82 BULK IN 64；if1 alt0 class E0/01/01 无端点（SCO 空 alt）。
+- 配置 = 2 接口 + IAD（R3' 要求，原稿误记"无 IAD"，2026-11-01 修正以对齐 spec）：IAD first=0/count=2 class E0/01/01 聚合为单一蓝牙功能；if0 alt0 class E0/01/01：EP 0x81 INT IN 16/1ms + 0x02 BULK OUT 64 + 0x82 BULK IN 64；if1 alt0 class E0/01/01 无端点（SCO 空 alt）。
 - **EP0 HCI 类请求**：`bmRequestType=0x20, bRequest=0x00`（wIndex 无关）：OUT data stage = HCI 命令包 → `controller().handle_command`；wLength 与 data 长度一致。旧形态 `bmRequestType=0xE0`（历史 bRequest 值）同样接受。其余 EP0 请求走标准处理（GET_DESCRIPTOR 等）。
 - **事件通道**：`on_in(0x81)` 时若事件队列有包 → `complete_in(0x81, 0, evt)`；否则挂起（内部记录 pending），`handle_command` 产生事件时若 pending → 立即 complete_in（经 sink，注意跨线程：sink 回调由 usbip server 的连接线程发起，complete_in 线程安全——server 侧写互斥已有）。
 - **ACL**：BULK OUT 数据流式到达 → 按 PB 标志重组完整 L2CAP 帧 → `handle_acl_from_host`；BULK IN：`on_in(0x82)` 拉一个完整 ACL 帧（M3 用）。帧切分 ≤64B（控制器 → 主机方向按 le_acl_mtu-4=247 切，M3）。

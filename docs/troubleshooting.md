@@ -5,7 +5,8 @@
 **定位顺序**：
 
 1. `integration-results/hci.snoop`（Wireshark 打开，btsnoop 格式）——查看 Windows 实际发送的
-   HCI 命令序列与我们的应答
+   HCI 命令序列与我们的应答。可用控制命令 `snoop <path>` 重定向抓包文件、`snoop off`
+   关闭抓包（CLI/GUI/命名管道均可）
 2. 服务器日志（`[INFO]` 级别）中的 `op=0x.... UNKNOWN` 行 —— 每一条都是需要补齐的命令：
    - 在 `src/hci/controller.cpp` 的命令表加 case（参考既有写法）
    - 在 `supported_command_list()` 补位图声明
