@@ -44,18 +44,24 @@ bool PipeServer::start(std::string* err, const std::string& name) {
 
 void PipeServer::stop() {
   if (!running_.exchange(false)) return;
-  // 唤醒监听线程：与其 CreateNamedPipe 的间隙竞态 → 短重试确保送达
-  for (int i = 0; i < 20; ++i) {
-    HANDLE wake = CreateFileA(pipe_name_.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
-                              OPEN_EXISTING, 0, nullptr);
-    if (wake != INVALID_HANDLE_VALUE) {
-      CloseHandle(wake);
-      break;
+  // 唤醒监听线程退出（running_ 已为 false，其至多再阻塞一次）：
+  //  - 等待客户端连接（ConnectNamedPipe）→ 连一下管道让它立即返回；
+  //  - 已连客户端阻塞在 ReadFile（客户端不发数据也不断开）→ 单实例被占，
+  //    唤醒用的 CreateFileA 恒 ERROR_PIPE_BUSY，必须 CancelSynchronousIo 取消
+  //    阻塞读（否则 join 永远等不到 —— bug pipe-stop-hang）。
+  // 取消只作用于在途 I/O：线程若恰好尚未进入下一次阻塞调用，本轮取消落空、
+  // 下一轮重试补上（等待 200ms × 至多 10 轮）。
+  for (auto& t : threads_) {
+    if (!t.joinable()) continue;
+    HANDLE h = static_cast<HANDLE>(t.native_handle());
+    for (int i = 0; i < 10 && WaitForSingleObject(h, 200) == WAIT_TIMEOUT; ++i) {
+      CancelSynchronousIo(h);
+      HANDLE wake = CreateFileA(pipe_name_.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                                OPEN_EXISTING, 0, nullptr);
+      if (wake != INVALID_HANDLE_VALUE) CloseHandle(wake);
     }
-    Sleep(100);
+    t.join();
   }
-  for (auto& t : threads_)
-    if (t.joinable()) t.join();
   threads_.clear();
 }
 

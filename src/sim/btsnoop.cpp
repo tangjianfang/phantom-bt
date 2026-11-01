@@ -11,11 +11,14 @@ namespace pb::sim {
 namespace {
 // btsnoop 时间纪元：0x00E03AB1A6764000 = 0000-01-01T00:00:00（微秒）
 constexpr uint64_t kBtsnoopEpochUs = 0x00E03AB1A6764000ull;
+// FILETIME 纪元 1601-01-01 → unix 纪元 1970-01-01 的 100ns 间隔数
+//（11644473600 秒 × 1e7）；漏减这一项会把记录时间多算约 369 年
+constexpr uint64_t kUnixEpochFiletime = 116444736000000000ull;
 uint64_t now_us_since_epoch() {
   FILETIME ft;
   GetSystemTimeAsFileTime(&ft);
   uint64_t t = ((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime;  // 1601 起 100ns
-  return t / 10 + kBtsnoopEpochUs;  // 转微秒并平移到 btsnoop 纪元
+  return (t - kUnixEpochFiletime) / 10 + kBtsnoopEpochUs;  // unix µs → btsnoop 纪元
 }
 }  // namespace
 
@@ -46,7 +49,7 @@ void BtSnoopWriter::close() {
   }
 }
 
-void BtSnoopWriter::write_record(uint8_t h4_type, const uint8_t* data, size_t n) {
+void BtSnoopWriter::write_record(uint8_t h4_type, const uint8_t* data, size_t n, uint32_t flags) {
   std::lock_guard<std::mutex> lk(mx_);
   if (!f_) return;
   std::vector<uint8_t> pkt;
@@ -57,7 +60,7 @@ void BtSnoopWriter::write_record(uint8_t h4_type, const uint8_t* data, size_t n)
   ByteWriter w;
   w.u32be((uint32_t)pkt.size());  // orig_len
   w.u32be((uint32_t)pkt.size());  // incl_len
-  w.u32be(0);                     // flags（主机→控制器方向可细分，此处统一 0）
+  w.u32be(flags);                 // bit0 方向：0 主机→控制器 / 1 控制器→主机
   w.u32be(0);                     // cum_drops
   w.u64be(now_us_since_epoch());
   w.bytes(pkt.data(), pkt.size());
@@ -67,18 +70,18 @@ void BtSnoopWriter::write_record(uint8_t h4_type, const uint8_t* data, size_t n)
 }
 
 void BtSnoopWriter::hci_command(const std::vector<uint8_t>& cmd) {
-  write_record(0x01, cmd.data(), cmd.size());
+  write_record(0x01, cmd.data(), cmd.size(), 0);
 }
 void BtSnoopWriter::hci_event(const std::vector<uint8_t>& evt) {
-  write_record(0x04, evt.data(), evt.size());
+  write_record(0x04, evt.data(), evt.size(), 1);
 }
 void BtSnoopWriter::acl_from_host(const hci::AclFrame& f) {
   auto b = hci::build_acl(f);
-  write_record(0x02, b.data(), b.size());
+  write_record(0x02, b.data(), b.size(), 0);
 }
 void BtSnoopWriter::acl_to_host(const hci::AclFrame& f) {
   auto b = hci::build_acl(f);
-  write_record(0x02, b.data(), b.size());
+  write_record(0x02, b.data(), b.size(), 1);
 }
 
 }  // namespace pb::sim

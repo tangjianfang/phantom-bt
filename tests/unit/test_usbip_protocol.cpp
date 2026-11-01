@@ -36,9 +36,10 @@ PB_TEST(usbip_usb_device_packed_size) {
 
 PB_TEST(usbip_rep_devlist_layout) {
   auto b = pack_rep_devlist({sample()});
-  PB_CHECK_EQ(b.size(), 12u + 312u + 4u);  // 头12 + 设备312 + 接口4
-  PB_CHECK_EQ(b[0], 0x00);
-  PB_CHECK_EQ(b[3], 0x01);   // OP_REP_DEVLIST BE
+  PB_CHECK_EQ(b.size(), 12u + 312u + 4u);  // op_common8 + ndev4 + 设备312 + 接口4
+  PB_CHECK_EQ(b[0], 0x01);   // op_common version hi
+  PB_CHECK_EQ(b[1], 0x11);   // version lo（0x0111）
+  PB_CHECK_EQ(b[3], 0x05);   // OP_REP_DEVLIST（code 低字节）
   PB_CHECK_EQ(b[7], 0x00);   // status=0
   PB_CHECK_EQ(b[11], 0x01);  // ndev=1
   size_t d = 12;             // 设备块起点
@@ -63,7 +64,8 @@ PB_TEST(usbip_rep_devlist_layout) {
 PB_TEST(usbip_rep_import_layout) {
   auto b = pack_rep_import(sample());
   PB_CHECK_EQ(b.size(), 8u + 312u);
-  PB_CHECK_EQ(b[3], 0x04);  // OP_REP_IMPORT
+  PB_CHECK_EQ(b[1], 0x11);  // version lo
+  PB_CHECK_EQ(b[3], 0x03);  // OP_REP_IMPORT（code 低字节）
   PB_CHECK_EQ(b[7], 0x00);  // status=0
   PB_CHECK_EQ(b[8 + OFF_VID], 0x12);
 }
@@ -118,20 +120,20 @@ PB_TEST(usbip_unlink_roundtrip) {
 PB_TEST(usbip_ret_submit_in_carries_data) {
   uint8_t data[] = {0xAA, 0xBB};
   auto b = pack_ret_submit(7, 1, 0x81, DIR_IN, 0, 2, data, 2);
-  PB_CHECK_EQ(b.size(), 42u);
+  PB_CHECK_EQ(b.size(), 50u);  // RET_SUBMIT 帧定长 48B + data 2
   PB_CHECK_EQ(b[3], 0x03);  // RET_SUBMIT
   PB_CHECK_EQ(b[7], 7);     // seqnum BE
   PB_CHECK_EQ(b[27], 2);    // actual_length BE（basic20+status4=24, +4=28 → offset 24..27）
-  PB_CHECK_EQ(b[40], 0xAA);
-  PB_CHECK_EQ(b[41], 0xBB);
-  // OUT 方向不带 data
+  PB_CHECK_EQ(b[48], 0xAA);
+  PB_CHECK_EQ(b[49], 0xBB);
+  // OUT 方向不带 data（帧仍为定长 48B）
   auto b2 = pack_ret_submit(7, 1, 0x02, DIR_OUT, 0, 2, data, 2);
-  PB_CHECK_EQ(b2.size(), 40u);
+  PB_CHECK_EQ(b2.size(), 48u);
 }
 
 PB_TEST(usbip_ret_unlink) {
   auto b = pack_ret_unlink(7, 1, 0x81, 0);
-  PB_CHECK_EQ(b.size(), 24u);
+  PB_CHECK_EQ(b.size(), 48u);  // RET_UNLINK 帧定长 48B（尾部补零）
   PB_CHECK_EQ(b[3], 0x04);
 }
 
@@ -148,6 +150,7 @@ PB_TEST(usbip_import_busid_parse) {
 PB_TEST(usbip_op_header) {
   auto b = pack_op_header(OP_REP_IMPORT, 1);
   PB_CHECK_EQ(b.size(), 8u);
-  PB_CHECK_EQ(b[3], 0x04);
+  PB_CHECK_EQ(b[1], 0x11);  // version lo
+  PB_CHECK_EQ(b[3], 0x03);  // OP_REP_IMPORT（code 低字节）
   PB_CHECK_EQ(b[7], 0x01);
 }

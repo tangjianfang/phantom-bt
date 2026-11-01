@@ -28,6 +28,10 @@ void Hogp::on_write(uint16_t handle, const std::vector<uint8_t>& v) {
 }
 
 bool Hogp::send_input_report(const std::vector<uint8_t>& keys8) {
+  if (suspended_) {  // HOGP suspend（控制点 0x00）：主机要求暂停输入报告通知
+    ++dropped_;
+    return false;
+  }
   if (!ccc_subscribed(H_REPORT1_CCC)) {
     ++dropped_;
     return false;

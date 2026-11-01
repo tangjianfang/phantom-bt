@@ -1,4 +1,4 @@
-param([switch]$SkipRealDevice)
+param([switch]$SkipRealDevice, [int]$Port = 3425)
 # M2 acceptance: BLE advertising discovery
 $ErrorActionPreference = "Continue"
 $root = Split-Path -Parent $PSScriptRoot
@@ -25,17 +25,24 @@ if (-not $SkipRealDevice) {
   if ($usbip -and $admin) {
     $probeExe = "$root/build/release/src/winrt-probe.exe"
     if (Test-Path $probeExe) {
-      # serve 加载蓝牙适配器与 BLE 键盘广播；探针在 attach 前启动等待
+      # serve loads the BT adapter + BLE keyboard advert; probe starts and waits.
+      # NOTE: keep this file ASCII-only. PS 5.1 -File reads no-BOM UTF-8 as ANSI/
+      # GBK on zh-CN hosts; a non-ASCII comment above a backtick continuation
+      # corrupts parsing (observed: "-ArgumentList" parsed as a command).
       $serveProc = Start-Process -FilePath "$root/build/release/src/phantombt.exe" `
-        -ArgumentList "serve","--load-bt","--ble","$root/profiles/ble_keyboard.json","--exit-after-ms","25000" `
+        -ArgumentList "serve","--port","$Port","--load-bt","--ble","$root/profiles/ble_keyboard.json","--exit-after-ms","25000" `
         -PassThru -WindowStyle Hidden
       Start-Sleep -Milliseconds 800
-      # attach via usbip
+      # attach via usbip: -t is a GLOBAL option of usbip-win2 (before the
+      # subcommand; attach has no -p). Mirrors Simulator::attach_commands
+      # (src/sim/simulator.cpp): --receive-mode low-latency avoids the
+      # usbip-win2 0.9.8 zero-copy recv bug that drops interrupt-IN HCI events.
       $usbipExe = if ($usbip -is [System.IO.FileInfo]) { $usbip.FullName } else { $usbip.Source }
-      & $usbipExe attach -r 127.0.0.1 -p 3240 -b 7-1 2>&1 | Out-Null
+      & $usbipExe -t $Port attach -r 127.0.0.1 -b 7-1 --receive-mode low-latency 2>&1 | Out-Null
       & $probeExe watcher --expect-name PhantomKb --duration-ms 10000 | Tee-Object -Variable watchOut
       $watchRc = $LASTEXITCODE
-      # 广播注入：命名管道暂缺 → 直接由 serve 侧预载（此处用 --probe 模式替代）
+      # advert injection: named-pipe path not available yet -> preloaded on the
+      # serve side (probe watcher mode used here instead)
       Stop-Process -Id $serveProc.Id -Force -ErrorAction SilentlyContinue
       $results.realdevice = if ($watchRc -eq 0) { "PASS" } else { "FAIL($watchOut)" }
     } else { $results.realdevice = "SKIP(no probe)" }

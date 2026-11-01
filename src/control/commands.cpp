@@ -10,7 +10,7 @@ std::string usage() {
   return "commands: load-hid <json> | load-bt | unload <busid> | unload-all | list | "
          "attach <busid> | detach <busid> | inject <busid> <hex> | ble-advertise <json> | "
          "ble-stop <addr> | ble-clear | ble-list | ble-type <addr> <text> | "
-         "sys-bt <list|disable|enable> | status | help";
+         "sys-bt <list|disable|enable> | snoop <path>|off | status | help";
 }
 
 static std::vector<std::string> split(const std::string& line) {
@@ -83,6 +83,9 @@ std::vector<std::string> execute(sim::Simulator& sim, const std::string& line) {
     if (cmd == "inject" && args.size() == 3) {
       auto bytes = from_hex(args[2]);
       return {"OK " + sim.cmd_inject(args[1], bytes)};
+    }
+    if (cmd == "snoop" && args.size() == 2) {
+      return {"OK " + sim.cmd_snoop(args[1])};
     }
     if (cmd == "status") {
       return {"OK " + sim.cmd_status()};

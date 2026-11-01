@@ -72,7 +72,8 @@ PB_TEST(cmac_rfc4493_40_bytes) {
 
 // —— SMP ——
 PB_TEST(smp_s1_definition) {
-  // s1(k,r1,r2)=e(k, r1'⊕r2')，r'=低 64bit（高 64bit 清零）
+  // s1(k,r1,r2)=e(k,r')，r' = r1 低64bit || r2 低64bit（拼接；Core 5.4 Vol3 H 2.2.4，
+  // 样例 9a1fe1f0e8b0f49b5b4216ae796da062 由 cov_infra_smp_s1_core54_224_spec_example 钉死）
   uint8_t k[16], r1[16], r2[16];
   for (int i = 0; i < 16; ++i) {
     k[i] = (uint8_t)i;
@@ -81,7 +82,10 @@ PB_TEST(smp_s1_definition) {
   }
   auto out = ble::SmpResponder::s1(k, r1, r2);
   uint8_t in[16] = {0};
-  for (int i = 0; i < 8; ++i) in[i] = (uint8_t)(r1[8 + i] ^ r2[8 + i]);
+  for (int i = 0; i < 8; ++i) {
+    in[i] = r1[8 + i];
+    in[8 + i] = r2[8 + i];
+  }
   uint8_t direct[16];
   crypto::aes128_encrypt_block(k, in, direct);
   PB_CHECK(std::equal(out.begin(), out.end(), direct));
@@ -111,7 +115,7 @@ PB_TEST(smp_just_works_exchange) {
   for (int i = 0; i < 16; ++i) random[1 + i] = (uint8_t)(0x50 + i);
   auto rrsp = smp.handle(random, 17);
   PB_CHECK(rrsp.has_value());
-  PB_CHECK_EQ((*rrsp)[0], 0x05);  // Pairing Random
+  PB_CHECK_EQ((*rrsp)[0], 0x04);  // Pairing Random（高优#6：回 0x05=Pairing Failed 会让主机中止配对）
   PB_CHECK(smp.paired());
 
   // STK = s1(TK=0, Srand, Mrand) 独立复算
@@ -126,7 +130,10 @@ PB_TEST(smp_just_works_exchange) {
 }
 
 PB_TEST(smp_c1_definition) {
-  // c1 双重结构与规范一致（独立构造验证实现自洽）
+  // c1 双重结构与规范一致（独立构造验证实现自洽）：
+  //   p1 = pres||preq||rat||iat，p2 = 00×4||ia||ra（Core 5.4 Vol3 H 2.2.3；
+  //   权威样例 1e1e3fef878988ead2a74dc5bef13b86 由
+  //   cov_infra_smp_c1_core54_223_spec_example 钉死）
   uint8_t tk[16], rand[16], preq[7], pres[7], ia[6], ra[6];
   for (int i = 0; i < 16; ++i) {
     tk[i] = (uint8_t)(i * 3);
@@ -144,16 +151,16 @@ PB_TEST(smp_c1_definition) {
   // 手工两步复算
   uint8_t r[16];
   std::memcpy(r, rand, 16);
-  for (int i = 0; i < 7; ++i) r[i] ^= preq[i];
-  for (int i = 0; i < 7; ++i) r[7 + i] ^= pres[i];
-  r[14] ^= 0;
-  r[15] ^= 1;
+  for (int i = 0; i < 7; ++i) r[i] ^= pres[i];
+  for (int i = 0; i < 7; ++i) r[7 + i] ^= preq[i];
+  r[14] ^= 1;
+  r[15] ^= 0;
   uint8_t p1[16];
   crypto::aes128_encrypt_block(tk, r, p1);
   uint8_t p2in[16] = {0};
   for (int i = 0; i < 6; ++i) {
-    p2in[i] = ia[5 - i];
-    p2in[6 + i] = ra[5 - i];
+    p2in[4 + i] = ia[i];
+    p2in[10 + i] = ra[i];
   }
   uint8_t x[16], fin[16];
   for (int i = 0; i < 16; ++i) x[i] = p1[i] ^ p2in[i];

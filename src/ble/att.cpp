@@ -69,11 +69,12 @@ std::optional<std::vector<uint8_t>> AttServer::handle(const uint8_t* pdu, size_t
         w.u8(7);  // handle(2)+props(1)+value_handle(2)+value_type(2)
         int fit = std::max(1, (db_.mtu - 2) / 8);
         bool any = false;
-        // 逐句柄扫描 char decl（db_ 只读接口）
-        for (uint16_t h = start; h <= end && fit > 0; ++h) {
-          const GattAttr* a = db_.by_handle(h);
+        // 逐句柄扫描 char decl（db_ 只读接口）。
+        // 用 32 位迭代：end=0xFFFF 时 uint16_t 会回绕重扫（重复句柄/死循环）
+        for (uint32_t h = start; h <= (uint32_t)end && fit > 0; ++h) {
+          const GattAttr* a = db_.by_handle((uint16_t)h);
           if (!a || a->type != T_CHAR_DECL) continue;
-          w.u16le(h);
+          w.u16le((uint16_t)h);
           w.u8(a->props);
           // 值句柄 = 下一个属性
           const GattAttr* v = db_.by_handle((uint16_t)(h + 1));
@@ -139,14 +140,18 @@ std::optional<std::vector<uint8_t>> AttServer::handle(const uint8_t* pdu, size_t
     }
     case ATT_WRITE_REQ: {
       uint16_t h = r.u16le();
-      std::vector<uint8_t> v(pdu + 3, pdu + n);
+      // 载荷起点 min(n,3)：n<3（opcode+残缺句柄）时 pdu+3 越过 pdu+n，
+      // vector(first,last) 区间起点越过终点是 UB —— 退化为空载荷（句柄 0 → 由 DB 报错）
+      size_t data_off = std::min<size_t>(n, 3);
+      std::vector<uint8_t> v(pdu + data_off, pdu + n);
       uint8_t err = db_.write_value(h, v);
       if (err) return error(op, h, err);
       return std::vector<uint8_t>{ATT_WRITE_RSP};
     }
     case ATT_WRITE_CMD: {
       uint16_t h = r.u16le();
-      std::vector<uint8_t> v(pdu + 3, pdu + n);
+      size_t data_off = std::min<size_t>(n, 3);  // 同上：防区间 UB
+      std::vector<uint8_t> v(pdu + data_off, pdu + n);
       db_.write_value(h, v);  // 无应答（错误静默）
       return std::nullopt;
     }

@@ -25,8 +25,18 @@ std::vector<uint8_t> L2capFixedDemux::handle(const std::vector<uint8_t>& pdu) {
   uint16_t cid;
   std::vector<uint8_t> payload;
   if (!parse_l2cap(pdu, cid, payload)) return {};
-  if (cid == L2CAP_CID_ATT && on_att) return build_l2cap(cid, on_att(payload));
-  if (cid == L2CAP_CID_SM && on_sm) return build_l2cap(cid, on_sm(payload));
+  // ATT Write Command / 未支持的 SMP PDU 等无应答场景返回空 —— 不得封装成
+  // 4 字节零长度 L2CAP PDU（零长度 ATT/SM PDU 无 opcode，违反 Vol 3 Part A/F）
+  if (cid == L2CAP_CID_ATT && on_att) {
+    auto rsp = on_att(payload);
+    if (rsp.empty()) return {};
+    return build_l2cap(cid, std::move(rsp));
+  }
+  if (cid == L2CAP_CID_SM && on_sm) {
+    auto rsp = on_sm(payload);
+    if (rsp.empty()) return {};
+    return build_l2cap(cid, std::move(rsp));
+  }
   return {};
 }
 

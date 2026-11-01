@@ -4,6 +4,7 @@
 // if1(E0/01/01): 仅空 alt0（规范允许的零等时带宽合规形态，无 SCO）
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "hci/controller.h"
@@ -41,6 +42,7 @@ class AdapterModel : public pb::usb::IUsbDeviceModel {
   pb::usb::DescriptorStore store_;
   pb::usbip::ExportedDevice exported_;
   pb::usb::IUsbModelSink* sink_ = nullptr;
+  mutable std::mutex pending_mx_;  // usbip 线程（on_in/flush）与 tick 线程（on_ready_to_host）互斥
   bool pending_evt_ = false;
   bool pending_acl_ = false;
   std::vector<uint8_t> acl_reassembly_;

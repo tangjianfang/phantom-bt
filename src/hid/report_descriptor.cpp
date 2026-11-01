@@ -6,10 +6,13 @@ namespace pb::hid {
 
 // vendor-defined 顶层集合：UsagePage(0xFF00) Usage(0x01) App
 //   Output 64B(usage 0x02) + Input 64B(usage 0x03)
+// 自带 Report ID (2)：Report ID 为 global 项，跨集合持久 —— 不显式声明时
+// 本集合字段会继承主集合的 Report ID（或全描述符无 ID），违反 HID §6.2.1.7
 static const uint8_t kVendorColl[] = {
     0x06, 0x00, 0xFF,                          // Usage Page (Vendor Defined 0xFF00)
     0x09, 0x01,                                // Usage (0x01)
     0xA1, 0x01,                                // Collection (Application)
+    0x85, 0x02,                                //   Report ID (2)
     0x09, 0x02,                                //   Usage (0x02)
     0x15, 0x00,                                //   Logical Min 0
     0x26, 0xFF, 0x00,                          //   Logical Max 255
@@ -35,7 +38,7 @@ static const uint8_t kKeyboardMain[] = {
     0x25, 0x01,                                //   Logical Max (1)
     0x75, 0x01,                                //   Report Size (1)
     0x95, 0x08,                                //   Report Count (8)
-    0x81, 0x00,                                //   Input (Data,Array,Abs) 修饰键
+    0x81, 0x02,                                //   Input (Data,Var,Abs) 修饰键（HID 1.11 附录 B.1 canonical 形态）
     0x95, 0x01,                                //   Report Count (1)
     0x75, 0x08,                                //   Report Size (8)
     0x81, 0x01,                                //   Input (Const) 保留
@@ -98,7 +101,10 @@ static const uint8_t kGamepadMain[] = {
     0x05, 0x01,                                // Usage Page (Generic Desktop)
     0x09, 0x05,                                // Usage (Game Pad)
     0xA1, 0x01,                                // Collection (Application)
+    0x85, 0x01,                                //   Report ID (1)（拼接 vendor 集合后全描述符均带 ID）
     0xA1, 0x00,                                //   Collection (Physical)
+    // hat 4b 须带 4b Const 填充补齐整字节（经典 XInput 形态）：否则报告总长 52bits
+    // =6.5 字节，Windows HidUsb 解析后设备启动失败（problem code 10，真机实测）
     0x05, 0x01,                                //     Usage Page (Generic Desktop)
     0x09, 0x39,                                //     Usage (Hat switch)
     0x15, 0x00,                                //     Logical Min (0)
@@ -109,6 +115,9 @@ static const uint8_t kGamepadMain[] = {
     0x75, 0x04,                                //     Report Size (4)
     0x95, 0x01,                                //     Report Count (1)
     0x81, 0x42,                                //     Input (Data,Var,Abs,Null State)
+    0x75, 0x04,                                //     Report Size (4)
+    0x95, 0x01,                                //     Report Count (1)
+    0x81, 0x01,                                //     Input (Const,Array,Abs) 填充至整字节
     0x05, 0x09,                                //     Usage Page (Buttons)
     0x19, 0x01,                                //     Usage Min (1)
     0x29, 0x10,                                //     Usage Max (16)

@@ -189,7 +189,7 @@ PB_TEST(e2e_smp_just_works_over_l2cap) {
     return p;
   }());
   PB_CHECK(r3.has_value());
-  PB_CHECK_EQ((*r3)[0], 0x05);
+  PB_CHECK_EQ((*r3)[0], 0x04);  // 高优#6：Pairing Random 应答须回显 0x04（0x05=Pairing Failed）
   PB_CHECK(t.stack->smp().paired());
 }
 

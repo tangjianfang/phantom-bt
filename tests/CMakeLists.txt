@@ -29,6 +29,15 @@ add_executable(phantombt-tests
   unit/test_test_runner.cpp
   unit/test_bt_radio.cpp
   unit/test_global_settings.cpp
+  unit/test_ble_cov.cpp
+  unit/test_bt_hci_cov.cpp
+  unit/test_core_cov.cpp
+  unit/test_hid_cov.cpp
+  unit/test_infra_cov.cpp
+  unit/test_sim_control_cov.cpp
+  unit/test_usb_usbip_cov.cpp
+  unit/test_cli_cov.cpp
+  unit/test_entry_cov.cpp
 )
 target_link_libraries(phantombt-tests PRIVATE phantom_core)
 target_compile_definitions(phantombt-tests PRIVATE PB_SOURCE_DIR="${CMAKE_SOURCE_DIR}")

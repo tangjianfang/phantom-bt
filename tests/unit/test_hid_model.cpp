@@ -50,7 +50,7 @@ PB_TEST(hid_get_report_descriptor_via_control) {
   auto m = make_vendor_model(&sink);
   auto resp = m->on_control(pb::usb::parse_setup(su8(0x81, 0x06, 0x2200, 0, 0xFFFF).data()), {});
   PB_CHECK_EQ(resp.size(), m->report_descriptor().size());
-  PB_CHECK_EQ(resp.size(), 27u);  // template_vendor 字节数
+  PB_CHECK_EQ(resp.size(), 29u);  // template_vendor 字节数（高优#3：vendor 集合补 Report ID(2)）
 }
 
 PB_TEST(hid_standard_descriptors_served) {

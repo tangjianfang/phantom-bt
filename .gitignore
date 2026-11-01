@@ -3,3 +3,7 @@ build.log
 *.user
 .vs/
 integration-results/
+.zcode/
+CoverageReport-*/
+__pycache__/
+docs/detailed-design.html

@@ -199,7 +199,9 @@ void start_auto_tests() {
           if (!IsWindow(g_main)) return;
           char* p = new char[line.size() + 1];
           memcpy(p, line.c_str(), line.size() + 1);
-          if (!SendMessageW(g_main, WM_APP_TESTLINE, (WPARAM)p, 0)) delete[] p;
+          // Post（异步）：跨线程 SendMessage 会阻塞等 UI 派发，与 log 全局互斥
+          // 组合成死锁（同 log sink 的处理）
+          if (!PostMessageW(g_main, WM_APP_TESTLINE, (WPARAM)p, 0)) delete[] p;
         },
         g_test_stop);
     // Post (async!): a synchronous SendMessage here deadlocks — the UI thread
@@ -794,7 +796,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
   // （to_w 定义于匿名命名空间，此处 err 转换）
 
   std::string err;
-  if (!g_sim.start(&err, 3240)) {
+  // 内嵌 usbip 服务器端口可配置（bug gui-port）：环境变量 PB_PORT，默认 3425
+  //（usbip 客户端默认端口 3240 被本机其它项目常驻占用）；tools/gui-verify.ps1
+  // 以同一变量跟随。非默认端口下从 GUI 发起的 attach 自动带 -t（attach_commands）。
+  if (!g_sim.start(&err, pb::sim::Simulator::server_port_from_env())) {
     MessageBoxW(nullptr, (L"Simulator 启动失败: " + to_w(err)).c_str(),
                 L"phantom-bt", MB_ICONERROR);
     return 1;
@@ -808,12 +813,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
   g_test_stop = CreateEventW(nullptr, FALSE, FALSE, nullptr);  // auto-reset
 
   pb::log_set_sink([](pb::LogLevel, std::string_view line) {
+    // 工作线程在 log_write 持全局互斥时进入本 sink：必须用 PostMessage（异步）。
+    // SendMessage 会同步等 UI 派发；若 UI 线程此刻正阻塞在同一互斥上（按钮→
+    // execute→PB_LOG），双方永久互等（死锁）。
     if (!g_log || !g_main) return;
     std::string heap(line);
     heap += "\n";
     char* p = new char[heap.size() + 1];
     std::memcpy(p, heap.c_str(), heap.size() + 1);
-    if (!SendMessageW(g_main, WM_APP_LOG, (WPARAM)p, 0)) delete[] p;
+    if (!PostMessageW(g_main, WM_APP_LOG, (WPARAM)p, 0)) delete[] p;
   });
 
   WNDCLASSW wc = {};

@@ -13,13 +13,12 @@ if (-not $occ) {
 }
 & powershell -NoProfile -File "$root/tools/build.ps1" -Config $Config *> $null
 if ($LASTEXITCODE -ne 0) { Write-Error "build failed"; exit 1 }
-$exe = "$root/build/$($Config.ToLower())/tests/phantombt-tests.exe"
-New-Item -ItemType Directory -Force -Path "$root/integration-results/coverage" | Out-Null
 $rootWin = $root -replace '/', '\'
+New-Item -ItemType Directory -Force -Path "$root/integration-results/coverage" | Out-Null
 & $occ --sources "$rootWin\src" `
   --excluded_sources "$rootWin\src\gui" `
   --excluded_sources "$rootWin\src\probes" `
   --excluded_sources "$rootWin\src\cli" `
   --export_type html:"$rootWin\integration-results\coverage" `
-  -- "$rootWin\build\debug\tests\phantombt-tests.exe"
+  -- "$rootWin\build\$($Config.ToLower())\tests\phantombt-tests.exe"
 exit $LASTEXITCODE

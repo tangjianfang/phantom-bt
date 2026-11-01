@@ -8,6 +8,12 @@ namespace pb::bt {
 
 AdapterModel::AdapterModel(const pb::hci::ControllerConfig& cfg, uint32_t busnum, uint32_t devnum)
     : controller_(cfg) {
+  // tick 线程/设备侧主动输出（广播报告、连接完成、HOGP 通知）没有主机命令触发，
+  // 挂起的 INT IN / BULK IN URB 须由此钩子完成（否则事件永远滞留控制器队列）
+  controller_.on_ready_to_host = [this] {
+    flush_event_if_pending();
+    flush_acl_if_pending();
+  };
   pb::usb::ConfigParams c;
   c.vid = 0x0B00;  // 测试用非常见 VID：避免 Windows 触发厂商初始化路径（R-111 缓解）
   c.pid = 0x0001;
@@ -18,7 +24,7 @@ AdapterModel::AdapterModel(const pb::hci::ControllerConfig& cfg, uint32_t busnum
   c.device_class = 0xE0;
   c.device_subclass = 0x01;
   c.device_protocol = 0x01;
-  c.bcd_usb = 0x0110;  // FS 蓝牙惯例
+  c.bcd_usb = 0x0200;  // HS 蓝牙惯例（usbip-win2 UDE 根集线器为 USB 3 形态，按 HS 规则校验：FS 描述符会在 BTHUSB SELECT_CONFIGURATION 时被拒）
   c.self_powered = false;
   c.remote_wakeup = false;
   pb::usb::InterfaceDef i0;
@@ -27,9 +33,9 @@ AdapterModel::AdapterModel(const pb::hci::ControllerConfig& cfg, uint32_t busnum
   i0.isubclass = 0x01;
   i0.iprotocol = 0x01;
   i0.endpoints = {
-      {0x81, 3, 16, 1},  // HCI 事件：INT IN，max 16，1ms
-      {0x02, 2, 64, 0},  // ACL OUT
-      {0x82, 2, 64, 0},  // ACL IN
+      {0x81, 3, 16, 4},   // HCI 事件：INT IN，max 16；HS 微帧语义 interval 4 = 2^(4-1)×125µs = 1ms
+      {0x02, 2, 512, 0},  // ACL OUT：HS bulk 只允许 512
+      {0x82, 2, 512, 0},  // ACL IN：HS bulk 只允许 512
   };
   pb::usb::InterfaceDef i1;  // SCO：仅空 alt0（无端点）
   i1.number = 1;
@@ -37,6 +43,8 @@ AdapterModel::AdapterModel(const pb::hci::ControllerConfig& cfg, uint32_t busnum
   i1.isubclass = 0x01;
   i1.iprotocol = 0x01;
   c.interfaces = {i0, i1};
+  // 无 IAD：本机实测 usbhub 未插 usbccgp（BTHUSB 直接以设备级 E0/01/01 兼容 ID 绑定
+  // 整机），同构项目 DeckBtService 的已验证形态亦无 IAD；去除以贴合该形态
 
   store_.device = pb::usb::build_device_descriptor(c);
   store_.config = pb::usb::build_config_descriptor(c);
@@ -49,6 +57,9 @@ AdapterModel::AdapterModel(const pb::hci::ControllerConfig& cfg, uint32_t busnum
   exported_.busid = std::to_string(busnum) + "-" + std::to_string(devnum);
   exported_.busnum = busnum;
   exported_.devnum = devnum;
+  // USB/IP 宣告 speed=3（HS）：与 bcdUSB 2.00 + bulk 512 的描述符形态一致，
+  // 否则 usbip-win2 UDE 端口校验按 FS 规则拒绝 HS 形态（反之亦然）
+  exported_.speed = pb::usbip::USBIP_SPEED_HIGH;
   exported_.vid = c.vid;
   exported_.pid = c.pid;
   exported_.dev_class = 0xE0;
@@ -62,7 +73,10 @@ AdapterModel::AdapterModel(const pb::hci::ControllerConfig& cfg, uint32_t busnum
 AdapterModel::~AdapterModel() = default;
 
 const pb::usbip::ExportedDevice& AdapterModel::exported() const { return exported_; }
-void AdapterModel::attach_sink(pb::usb::IUsbModelSink* s) { sink_ = s; }
+void AdapterModel::attach_sink(pb::usb::IUsbModelSink* s) {
+  std::lock_guard<std::mutex> lk(pending_mx_);
+  sink_ = s;
+}
 
 std::vector<uint8_t> AdapterModel::on_control(const pb::usb::ControlSetup& s,
                                               const std::vector<uint8_t>& data) {
@@ -104,6 +118,9 @@ void AdapterModel::on_out(uint8_t ep, std::vector<uint8_t> data) {
 }
 
 void AdapterModel::on_in(uint8_t ep) {
+  // pending 标志与 sink 被 usbip 连接线程 / tick 线程（经 on_ready_to_host）并发触碰，
+  // 串行化两条路径；sink 内部另有自锁，此处锁不与 server 侧锁形成反向顺序
+  std::lock_guard<std::mutex> lk(pending_mx_);
   std::vector<uint8_t> evt;
   if (ep == 0x81) {
     if (controller_.pop_event(evt)) {
@@ -130,13 +147,14 @@ void AdapterModel::send_event_now(std::vector<uint8_t> evt) {
 }
 
 void AdapterModel::send_acl_now(pb::hci::AclFrame f) {
-  // 控制器→主机方向按 64B 切包（BULK max 64；M3 起按 le_acl_mtu-4 生成完整帧后由 USB 分包）
+  // 控制器→主机方向整帧交付（HS BULK max 512；帧长 >512 时由 USB 传输层分包，分包 ≤512 仍合法）
   auto bytes = pb::hci::build_acl(f);
   ++acl_tx_;
   if (sink_) sink_->complete_in(0x82, 0, std::move(bytes));
 }
 
 void AdapterModel::flush_event_if_pending() {
+  std::lock_guard<std::mutex> lk(pending_mx_);
   if (!pending_evt_) return;
   std::vector<uint8_t> evt;
   if (controller_.pop_event(evt)) {
@@ -146,6 +164,7 @@ void AdapterModel::flush_event_if_pending() {
 }
 
 void AdapterModel::flush_acl_if_pending() {
+  std::lock_guard<std::mutex> lk(pending_mx_);
   if (!pending_acl_) return;
   pb::hci::AclFrame f;
   if (controller_.pop_acl_to_host(f)) {
@@ -155,6 +174,7 @@ void AdapterModel::flush_acl_if_pending() {
 }
 
 void AdapterModel::on_detach() {
+  std::lock_guard<std::mutex> lk(pending_mx_);
   pending_evt_ = false;
   pending_acl_ = false;
   acl_reassembly_.clear();

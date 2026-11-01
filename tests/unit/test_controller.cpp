@@ -48,13 +48,13 @@ PB_TEST(controller_le_buffer_size_params) {
   send(c, {0x02, 0x20, 0x00});  // LE_Read_Buffer_Size
   std::vector<uint8_t> e;
   PB_CHECK(c.pop_event(e));
-  // 0E 08 01 02 20 00 FB 00 00 08：status, le_acl_mtu LE(2), sco_mtu(1), num(1)
-  PB_CHECK_EQ(e[1], 8u);
+  // 0E 07 01 02 20 00 FB 00 08：status, le_acl_mtu LE(2), num(1)
+  //（Vol4 PartE 7.8.2：无独立 SCO/ISO mtu 字节；bug_lebuf 修复多拼的 0）
+  PB_CHECK_EQ(e[1], 7u);
   PB_CHECK_EQ(e[5], ST_SUCCESS);
   PB_CHECK_EQ(e[6], 0xFB);
   PB_CHECK_EQ(e[7], 0x00);
-  PB_CHECK_EQ(e[8], 0u);  // 无 SCO
-  PB_CHECK_EQ(e[9], 8u);
+  PB_CHECK_EQ(e[8], 8u);
 }
 
 PB_TEST(controller_read_bd_addr_layout) {

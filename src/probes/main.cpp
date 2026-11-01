@@ -95,9 +95,17 @@ int cmd_hid(const Args& a) {
   std::string expect = str(a, "--expect-hex");
 
   try {
+    // 设备发现带重试：attach 后 Windows 枚举+驱动启动需要数秒，wait_ms 同时覆盖
+    // 发现与报告等待两个阶段
     auto selector = HidDevice::GetDeviceSelector(usage_page, usage, vid, pid);
-    auto devices = DeviceInformation::FindAllAsync(selector).get();
-    if (devices.Size() == 0) return finish(false, "nodev", {});
+    auto discover_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(wait_ms);
+    winrt::Windows::Devices::Enumeration::DeviceInformationCollection devices = nullptr;
+    for (;;) {
+      devices = DeviceInformation::FindAllAsync(selector).get();
+      if (devices.Size() > 0) break;
+      if (std::chrono::steady_clock::now() >= discover_deadline) return finish(false, "nodev", {});
+      std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
     auto hid = HidDevice::FromIdAsync(devices.GetAt(0).Id(), FileAccessMode::ReadWrite).get();
     if (!hid) return finish(false, "open", {});
 
@@ -141,14 +149,23 @@ int cmd_radio_winrt(const Args& a) {
   (void)a;
   try {
     auto radios = Windows::Devices::Radios::Radio::GetRadiosAsync().get();
-    for (auto const& r : radios) {
-      if (r.Kind() == Windows::Devices::Radios::RadioKind::Bluetooth) {
+    // R-110：多 radio 共存时"取第一个 Bluetooth radio"会拿到内置物理 radio
+    // （如 Intel）——物理 radio 开着时是假 pass。必须优先匹配虚拟 radio 的
+    // 名字（adapter_model.cpp 的 product = "Phantom-BT Radio"）。
+    std::vector<winrt::Windows::Devices::Radios::Radio> bt;
+    for (auto const& r : radios)
+      if (r.Kind() == Windows::Devices::Radios::RadioKind::Bluetooth) bt.push_back(r);
+    if (bt.empty()) return finish(false, "noradio", {});
+    for (auto const& r : bt) {
+      if (winrt::to_string(r.Name()) == "Phantom-BT Radio") {
         bool on = r.State() == Windows::Devices::Radios::RadioState::On;
         if (on) return finish(true, "name:" + winrt::to_string(r.Name()), {});
         return finish(false, "state:" + std::to_string((int32_t)r.State()), {});
       }
     }
-    return finish(false, "noradio", {});
+    // 虚拟 radio 未枚举到：其它 Bluetooth radio（物理）再 On 也不算过——
+    // 这正是本探针要抓的"BTHPORT 未 onboard 到虚拟适配器"状态
+    return finish(false, "nophantomradio bt:" + std::to_string(bt.size()), {});
   } catch (const winrt::hresult_error& e) {
     return finish(false, winrt::to_string(e.message()), {});
   }

@@ -132,8 +132,13 @@ bool TcpListener::listen(uint16_t port, std::string* err) {
     if (err) *err = wsa_err("socket");
     return false;
   }
-  BOOL reuse = TRUE;
-  setsockopt((SOCKET)s_, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuse, sizeof(reuse));
+  // Windows 上 SO_REUSEADDR 允许第二个监听 socket 抢绑活动端口（与 Linux 语义
+  // 不同）——Simulator::start 的"端口被占则回退 want+1..want+9"依赖 bind 失败，
+  // REUSEADDR 会让双绑"成功"（entry_serve_port_fallback_when_busy 钉死）。改用
+  // SO_EXCLUSIVEADDRUSE：占用端口正确返回 WSAEADDRINUSE，且禁止任何 socket 抢绑。
+  BOOL exclusive = TRUE;
+  setsockopt((SOCKET)s_, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*)&exclusive,
+             sizeof(exclusive));
   sockaddr_in addr{};
   addr.sin_family = AF_INET;
   addr.sin_addr.s_addr = htonl(INADDR_ANY);

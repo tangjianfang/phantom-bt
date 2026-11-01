@@ -45,6 +45,7 @@ constexpr uint16_t CMD_WRITE_INQUIRY_SCAN_TYPE = opcode(0x03, 0x0043);
 constexpr uint16_t CMD_WRITE_SIMPLE_PAIRING_MODE = opcode(0x03, 0x0056);
 constexpr uint16_t CMD_WRITE_SC_HOST_SUPPORT = opcode(0x03, 0x007A);
 constexpr uint16_t CMD_READ_STORED_LINK_KEY = opcode(0x03, 0x000D);
+constexpr uint16_t CMD_WRITE_STORED_LINK_KEY = opcode(0x03, 0x0011);  // 0x0C11
 constexpr uint16_t CMD_DELETE_STORED_LINK_KEY = opcode(0x03, 0x0012);
 constexpr uint16_t CMD_WRITE_PIN_TYPE = opcode(0x03, 0x000A);
 constexpr uint16_t CMD_WRITE_LOOPBACK_MODE = opcode(0x03, 0x002D);
@@ -129,7 +130,9 @@ constexpr uint8_t ST_SUCCESS = 0x00, ST_UNKNOWN_CMD = 0x01, ST_UNKNOWN_CONN_ID =
                   ST_UNSUPPORTED = 0x11 /*同上按上下文区分*/,
                   ST_INVALID_PARAMS = 0x12, ST_REMOTE_USER_TERM = 0x13,
                   ST_REMOTE_LOW_RESOURCES = 0x14, ST_UNSUPPORTED_REMOTE = 0x1A,
-                  ST_UNSPECIFIED_ERROR = 0x1F;
+                  ST_UNSPECIFIED_ERROR = 0x1F,
+                  // Operation Cancelled by Host：LE_Create_Connection_Cancel 终止挂起建链
+                  ST_OPERATION_CANCELLED = 0x42;
 
 // —— ACL 帧头 ——
 constexpr uint16_t ACL_PB_START = 0x0000, ACL_PB_CONT = 0x1000, ACL_PB_START_AUTO = 0x2000;

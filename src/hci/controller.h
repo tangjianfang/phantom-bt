@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -72,6 +73,9 @@ class MiniController {
   std::function<void(uint16_t handle, const std::vector<uint8_t>& pdu)> on_l2cap_from_host;
   // 设备侧发送完整 L2CAP PDU → ACL 切片入队（BULK IN 侧取走）
   void send_l2cap(uint16_t handle, const std::vector<uint8_t>& pdu);
+  // 事件/ACL 出队方向有新数据（tick 广播报告、连接完成、设备侧主动 L2CAP 等
+  // 非主机命令触发的输出）。适配器模型挂接以完成挂起的 INT IN / BULK IN URB。
+  std::function<void()> on_ready_to_host;
 
  private:
   struct Impl;
@@ -92,6 +96,10 @@ class MiniController {
   VirtualAir air_;            // 自有虚拟空口
   LinkTable links_;           // M3：连接句柄表
   AclReassembler reasm_;      // 主机→设备 ACL 重组
+  // ACL 流控：主机→控制器方向的在途包（句柄 → 已收未完成包数）；
+  // 每个 HCI ACL 数据包占用一个控制器缓冲，发送完成后以
+  // Number_Of_Completed_Packets 事件归还主机 credit（Vol4 PartE 7.7.19）
+  std::map<uint16_t, uint16_t> acl_inflight_;
   std::vector<std::pair<uint16_t, std::vector<uint8_t>>> delayed_events_;  // (tick 倒计时, 事件)
   std::string local_name_stored_;
   std::array<uint8_t, 8> eir_{};
@@ -105,7 +113,8 @@ class MiniController {
   uint64_t conn_peer_ = 0;
 };
 
-// 命令位图中的位序：Supported Commands 表 pos = (ogf-1)*64 + (ocf & 0x3F)
+// 命令在 Supported Commands 位图（Vol 4 Part E §6.27 规范表格）中的位号；
+// 未收录命令返回 ≥512（超出 64 字节位图，表示不可表示）
 size_t supported_commands_bit(uint16_t op);
 // 本引擎支持的命令列表（Read_Local_Supported_Commands 与一致性检查用）
 const std::vector<uint16_t>& supported_command_list();

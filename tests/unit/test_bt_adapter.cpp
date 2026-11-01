@@ -35,25 +35,37 @@ PB_TEST(bt_adapter_descriptors_match_spec) {
   PB_CHECK_EQ(e.num_interfaces, 2u);
   PB_CHECK_EQ(e.interfaces.size(), 2u);
   PB_CHECK_EQ(e.interfaces[1].iclass, 0xE0);
+  PB_CHECK_EQ(e.speed, usbip::USBIP_SPEED_HIGH);  // USB/IP 宣告 HS（HS 化根因修复）
   // 控制描述符：设备级 E0 + 配置 2 接口
   auto dev = m.on_control(pb::usb::parse_setup(su8(0x80, 0x06, 0x0100, 0, 18).data()), {});
   PB_CHECK_EQ(dev.size(), 18u);
+  PB_CHECK_EQ(dev[2], 0x00);  // bcdUSB 0x0200 LE（HS；原 0x0110 FS 被 UDE 根集线器拒绝）
+  PB_CHECK_EQ(dev[3], 0x02);
   PB_CHECK_EQ(dev[4], 0xE0);
   PB_CHECK_EQ(dev[5], 0x01);
   PB_CHECK_EQ(dev[6], 0x01);
   PB_CHECK_EQ(dev[7], 64);
   auto cfg = m.on_control(pb::usb::parse_setup(su8(0x80, 0x06, 0x0200, 0, 255).data()), {});
-  // 9 + 9+21 + 9 = 48
+  // 9(config) + [9(if0) + 7×3(EP)] + 9(if1) = 48（无 IAD：贴合已验证形态，usbhub 未插 usbccgp）
   PB_CHECK_EQ(cfg.size(), 48u);
+  PB_CHECK_EQ(cfg[2], 48);  // wTotalLength LE
+  PB_CHECK_EQ(cfg[3], 0);
   PB_CHECK_EQ(cfg[4], 2);
-  PB_CHECK_EQ(cfg[14], 0xE0);   // if0 class（if0@9, class@9+5）
-  PB_CHECK_EQ(cfg[20], 0x81);   // EP1 INT IN（EP1@18, addr@20）
-  PB_CHECK_EQ(cfg[21], 3);      // interrupt
-  PB_CHECK_EQ(cfg[22], 16);     // max 16
-  PB_CHECK_EQ(cfg[27], 0x02);   // EP2 BULK OUT（EP2@25, addr@27）
+  PB_CHECK_EQ(cfg[9], 9);      // if0@9 bLength
+  PB_CHECK_EQ(cfg[10], 0x04);  // DT_INTERFACE
+  PB_CHECK_EQ(cfg[14], 0xE0);  // if0 class（if0@9, class@9+5）
+  PB_CHECK_EQ(cfg[20], 0x81);  // EP1 INT IN（EP1@18, addr@20）
+  PB_CHECK_EQ(cfg[21], 3);     // interrupt
+  PB_CHECK_EQ(cfg[22], 16);    // max 16
+  PB_CHECK_EQ(cfg[24], 4);     // interval 4（HS 语义 2^(4-1)×125µs = 1ms）
+  PB_CHECK_EQ(cfg[27], 0x02);  // EP2 BULK OUT（EP2@25, addr@27）
   PB_CHECK_EQ(cfg[28], 2);
-  PB_CHECK_EQ(cfg[34], 0x82);   // EP3 BULK IN（EP3@32, addr@34）
+  PB_CHECK_EQ(cfg[29], 0x00);  // wMaxPacketSize 512 LE（HS bulk 只允许 512）
+  PB_CHECK_EQ(cfg[30], 0x02);
+  PB_CHECK_EQ(cfg[34], 0x82);  // EP3 BULK IN（EP3@32, addr@34）
   PB_CHECK_EQ(cfg[35], 2);
+  PB_CHECK_EQ(cfg[36], 0x00);  // wMaxPacketSize 512 LE
+  PB_CHECK_EQ(cfg[37], 0x02);
   PB_CHECK_EQ(cfg[43], 0);      // if1@39 numEP=0（空 SCO alt0）
   PB_CHECK_EQ(cfg[44], 0xE0);   // if1 class
 }

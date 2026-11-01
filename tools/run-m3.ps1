@@ -1,4 +1,4 @@
-param([switch]$SkipRealDevice)
+param([switch]$SkipRealDevice, [int]$Port = 3425)
 # M3 acceptance: BLE HID keyboard end-to-end over real Windows BT stack
 $ErrorActionPreference = "Continue"
 $root = Split-Path -Parent $PSScriptRoot
@@ -26,11 +26,14 @@ if (-not $SkipRealDevice) {
     if (Test-Path $probeExe) {
       # 1) watcher sees advertisement
       $serveProc = Start-Process -FilePath "$root/build/release/src/phantombt.exe" `
-        -ArgumentList "serve","--load-bt","--ble","$root/profiles/ble_keyboard.json","--exit-after-ms","60000" `
+        -ArgumentList "serve","--port","$Port","--load-bt","--ble","$root/profiles/ble_keyboard.json","--exit-after-ms","60000" `
         -PassThru -WindowStyle Hidden
       Start-Sleep -Milliseconds 800
       $usbipExe = if ($usbip -is [System.IO.FileInfo]) { $usbip.FullName } else { $usbip.Source }
-      & $usbipExe attach -r 127.0.0.1 -p 3240 -b 7-1 2>&1 | Out-Null
+      # -t is a GLOBAL usbip-win2 option (before the subcommand; attach has no
+      # -p); mirrors Simulator::attach_commands (src/sim/simulator.cpp), incl.
+      # --receive-mode low-latency (0.9.8 zero-copy recv drops interrupt-IN).
+      & $usbipExe -t $Port attach -r 127.0.0.1 -b 7-1 --receive-mode low-latency 2>&1 | Out-Null
       & $probeExe watcher --expect-name PhantomKb --duration-ms 10000 | Tee-Object -Variable w
       $watchRc = $LASTEXITCODE
       # 2) connect + GATT + HID node

@@ -14,6 +14,7 @@ namespace pb::control {
 //  attach <busid>         → OK
 //  detach <busid>         → OK
 //  inject <busid> <hex>   → OK
+//  snoop <path>|off       → OK（重定向/关闭 HCI 抓包）
 //  status                 → OK usbip-port=<p> devices=<n>
 //  help                   → 用法
 std::vector<std::string> execute(sim::Simulator& sim, const std::string& line);

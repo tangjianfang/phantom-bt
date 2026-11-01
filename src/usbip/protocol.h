@@ -9,11 +9,14 @@
 
 namespace pb::usbip {
 
-// 控制/枚举 opcodes
-constexpr uint32_t OP_REQ_DEVLIST = 0x80000000u;
-constexpr uint32_t OP_REP_DEVLIST = 0x00000001u;
-constexpr uint32_t OP_REQ_IMPORT = 0x80000003u;
-constexpr uint32_t OP_REP_IMPORT = 0x00000004u;
+// op 阶段公共头 op_common（Linux usbip_common.h / usbip-win proto_op.h）：
+//   u16 version(BE)=0x0111 + u16 code(BE) + u32 status(BE)，请求/应答同为 8B。
+// 控制/枚举 opcodes（code 字段取值，与 usbip.exe 客户端一致）
+constexpr uint16_t OP_VERSION = 0x0111;
+constexpr uint16_t OP_REQ_DEVLIST = 0x8005;
+constexpr uint16_t OP_REP_DEVLIST = 0x0005;
+constexpr uint16_t OP_REQ_IMPORT = 0x8003;
+constexpr uint16_t OP_REP_IMPORT = 0x0003;
 // URB opcodes
 constexpr uint32_t USBIP_CMD_SUBMIT = 0x00000001u;
 constexpr uint32_t USBIP_CMD_UNLINK = 0x00000002u;
@@ -23,12 +26,19 @@ constexpr uint32_t USBIP_RET_UNLINK = 0x00000004u;
 constexpr uint32_t DIR_OUT = 0;
 constexpr uint32_t DIR_IN = 1;
 constexpr uint32_t USBIP_SPEED_FULL = 2;  // 12Mbps
+constexpr uint32_t USBIP_SPEED_HIGH = 3;  // 480Mbps（usbip-win2 UDE 根集线器按 HS 规则校验端口，
+                                          // bulk 512/bcdUSB 2.00 形态须配 speed=3 宣告）
 
 // URB 状态码（取自 linux/errno.h 通用值）
 constexpr int32_t URB_STATUS_SUCCESS = 0;
 constexpr int32_t URB_STATUS_EPIPE = -32;      // STALL
 constexpr int32_t URB_STATUS_ECONNRESET = -104;
 constexpr int32_t URB_STATUS_ENODEV = -19;
+constexpr int32_t URB_STATUS_EINVAL = -22;     // 参数非法（如超限 transfer_buffer_length）
+
+// CMD_SUBMIT transfer_buffer_length 钳位上限（16MB）：tbl 由对端完全控制，
+// 超限值不得进入 data.resize/recv 路径（单包巨额分配可打挂进程），须回 EINVAL
+constexpr int32_t MAX_TRANSFER_BUFFER = 16 * 1024 * 1024;
 
 struct ExportedInterface {
   uint8_t iclass, isubclass, iprotocol;
@@ -58,8 +68,11 @@ constexpr size_t USB_DEVICE_PACKED_SIZE = 312;  // usbip_usb_device
 constexpr size_t IFACE_PACKED_SIZE = 4;         // usbip_usb_interface
 constexpr size_t CMD_SUBMIT_HDR_SIZE = 48;
 constexpr size_t CMD_UNLINK_HDR_SIZE = 24;
-constexpr size_t RET_SUBMIT_HDR_SIZE = 40;
-constexpr size_t RET_UNLINK_HDR_SIZE = 24;
+// RET_SUBMIT/RET_UNLINK 与 CMD_* 同为 usbip_header union 定长 48B
+//（basic20 + RET_SUBMIT 尾部 20B + setup[8] 占位 = 48；usbip-win
+// static_assert(sizeof(header)==48)，客户端按 PDU 固定读 48B）
+constexpr size_t RET_SUBMIT_HDR_SIZE = 48;
+constexpr size_t RET_UNLINK_HDR_SIZE = 48;
 
 // 打包
 std::vector<uint8_t> pack_op_header(uint32_t op, int32_t status);

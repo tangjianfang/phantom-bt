@@ -3,9 +3,13 @@
 # path a mouse click takes through the owner-draw procs); SendMessage(WM_
 # COMMAND) is never used, so broken control->parent routing cannot hide.
 # ASCII-only source. Exit code 0 = all checks passed.
+# -Port follows the GUI embedded usbip server port (bug gui-port): the GUI is
+# launched with PB_PORT=$Port (default 3425) and the port is probed over TCP.
+param([int]$Port = 3425)
 $ErrorActionPreference = 'Stop'
-$exe = 'C:/tjf/github/phantom-bt/build/release/src/phantombt-gui.exe'
-$out = 'C:/tjf/github/phantom-bt/integration-results/gui-verify.txt'
+$root = Split-Path -Parent $PSScriptRoot
+$exe = "$root/build/release/src/phantombt-gui.exe"
+$out = "$root/integration-results/gui-verify.txt"
 $sig = @'
 using System;
 using System.Runtime.InteropServices;
@@ -66,6 +70,7 @@ function Check([string]$name, [bool]$ok) {
 
 cmd /c "taskkill /IM phantombt-gui.exe /F >nul 2>&1"
 Start-Sleep -Milliseconds 600
+$env:PB_PORT = "$Port"   # GUI embedded usbip server port follows (bug gui-port)
 Start-Process $exe
 Start-Sleep -Seconds 3
 $mw = [G]::FindByTitlePart('phantom-bt')
@@ -74,6 +79,16 @@ if ($mw -eq [IntPtr]::Zero) {
   [System.IO.File]::WriteAllLines($out, $lines, (New-Object System.Text.UTF8Encoding($false)))
   Write-Output ('FAILED: ' + $fail + ' checks'); exit 1
 }
+
+# --- embedded usbip server must follow PB_PORT (bug gui-port) ---
+$tcpOk = $false
+try {
+  $tcp = New-Object System.Net.Sockets.TcpClient
+  $tcp.Connect('127.0.0.1', $Port)
+  $tcpOk = $tcp.Connected
+  $tcp.Close()
+} catch { $tcpOk = $false }
+Check ("embedded usbip server listens on PB_PORT $Port") ($tcpOk)
 
 # --- control discovery (class + geometry based; no CJK title matching) ---
 $navs = New-Object System.Collections.Generic.List[object]

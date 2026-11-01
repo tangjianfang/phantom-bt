@@ -2,6 +2,7 @@
 
 #include <cstring>
 
+#include "core/log.h"
 #include "hid/report_descriptor.h"
 #include "usb/descriptors.h"
 
@@ -35,7 +36,7 @@ HidModel::HidModel(const HidProfile& p, uint32_t busnum, uint32_t devnum) : prof
   intf.isubclass = 0;
   intf.iprotocol = p.template_name == "keyboard" ? 1 : p.template_name == "mouse" ? 2 : 0;
   intf.hid = pb::usb::HidClassDescriptor{.report_length = (uint16_t)rdesc.size()};
-  intf.endpoints = {{0x81, 3, 64, 1}, {0x01, 3, 64, 1}};
+  intf.endpoints = {{0x81, 3, 64, 4}, {0x01, 3, 64, 4}};  // HS 微帧语义：interval 4 = 2^3×125µs = 1ms
   c.interfaces = {intf};
 
   store_.device = pb::usb::build_device_descriptor(c);
@@ -72,6 +73,9 @@ std::vector<uint8_t> HidModel::on_control(const pb::usb::ControlSetup& s,
                                           const std::vector<uint8_t>& data) {
   // 标准请求先走通用分发（只读 store_，无锁安全）
   std::vector<uint8_t> out;
+  PB_LOG_DEBUG("hid ctrl: bm=0x" + std::to_string(s.bmRequestType) + " req=" +
+              std::to_string(s.bRequest) + " wValue=0x" + std::to_string(s.wValue) +
+              " wLen=" + std::to_string(s.wLength) + " data=" + std::to_string(data.size()));
   if (pb::usb::descriptor_request(s, store_, out)) return out;
 
   uint8_t type = s.bmRequestType & 0x60;
@@ -82,6 +86,8 @@ std::vector<uint8_t> HidModel::on_control(const pb::usb::ControlSetup& s,
       (s.wValue >> 8) == 0x22) {
     // HID 报告描述符（标准类型、接口接收者）
     out = store_.report_descriptor;
+    PB_LOG_INFO("hid rdesc: store size=" + std::to_string(store_.report_descriptor.size()) +
+                " wLen=" + std::to_string(s.wLength) + " reply=" + std::to_string(out.size()));
     if (out.size() > s.wLength) out.resize(s.wLength);
     return out;
   }
@@ -118,6 +124,8 @@ std::vector<uint8_t> HidModel::on_control(const pb::usb::ControlSetup& s,
   }
 
   stalled_recently = true;
+  PB_LOG_WARN("hid STALL: bm=0x" + std::to_string(s.bmRequestType) + " req=" +
+              std::to_string(s.bRequest) + " wValue=0x" + std::to_string(s.wValue));
   throw pb::usb::ControlStall("hid: unsupported control request");
 }
 

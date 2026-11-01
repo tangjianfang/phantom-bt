@@ -7,8 +7,10 @@
 namespace pb::usbip {
 
 std::vector<uint8_t> pack_op_header(uint32_t op, int32_t status) {
+  // op_common：version(0x0111) + code + status —— 真实客户端按此 8B 定长解析
   ByteWriter w;
-  w.u32be(op);
+  w.u16be(OP_VERSION);
+  w.u16be((uint16_t)op);
   w.u32be((uint32_t)status);
   return w.take();
 }
@@ -40,8 +42,8 @@ std::vector<uint8_t> pack_usb_device(const ExportedDevice& d) {
 
 std::vector<uint8_t> pack_rep_devlist(const std::vector<ExportedDevice>& devs) {
   ByteWriter w;
-  w.u32be(OP_REP_DEVLIST);
-  w.u32be(0);  // status
+  auto hdr = pack_op_header(OP_REP_DEVLIST, 0);
+  w.bytes(hdr.data(), hdr.size());
   w.u32be((uint32_t)devs.size());
   for (const auto& d : devs) {
     auto dev = pack_usb_device(d);
@@ -58,8 +60,8 @@ std::vector<uint8_t> pack_rep_devlist(const std::vector<ExportedDevice>& devs) {
 
 std::vector<uint8_t> pack_rep_import(const ExportedDevice& d) {
   ByteWriter w;
-  w.u32be(OP_REP_IMPORT);
-  w.u32be(0);  // status = 0 成功
+  auto hdr = pack_op_header(OP_REP_IMPORT, 0);  // status = 0 成功
+  w.bytes(hdr.data(), hdr.size());
   auto dev = pack_usb_device(d);
   w.bytes(dev.data(), dev.size());
   return w.take();
@@ -79,6 +81,8 @@ std::vector<uint8_t> pack_ret_submit(uint32_t seqnum, uint32_t devid, uint32_t e
   w.u32be(0);  // start_frame
   w.u32be(0);  // number_of_packets（不支持 iso）
   w.u32be(0);  // error_count
+  // union 尾部 setup[8] 占位补零：头部定长 48B，客户端按 PDU 固定读 48 再接 data
+  w.zeros(8);
   if (direction == DIR_IN && data && data_len) w.bytes(data, data_len);
   return w.take();
 }
@@ -91,6 +95,7 @@ std::vector<uint8_t> pack_ret_unlink(uint32_t seqnum, uint32_t devid, uint32_t e
   w.u32be(DIR_OUT);
   w.u32be(ep);
   w.u32be((uint32_t)status);
+  w.zeros(24);  // union 定长 48B：RET_UNLINK 尾部补零
   return w.take();
 }
 

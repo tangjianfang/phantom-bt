@@ -1,4 +1,4 @@
-param([switch]$SkipRealDevice)
+param([switch]$SkipRealDevice, [int]$Port = 3425)
 # M0 acceptance: USB HID full chain
 # 1) build  2) loopback selftest (no kernel deps, always runs)
 # 3) real device (default): serve --load gamepad --attach --probe winrt-probe hid
@@ -28,8 +28,8 @@ if (-not $SkipRealDevice) {
   if ($usbip -and $admin) {
     $probeExe = "$root/build/release/src/winrt-probe.exe"
     if (Test-Path $probeExe) {
-      $probeCmd = ('"{0}" hid --vid 0x1209 --pid 0xB007 --usage-page 0xFF00 --usage 0x01 --wait-ms 8000' -f $probeExe)
-      & "$root/build/release/src/phantombt.exe" serve --load "$root/profiles/gamepad.json" --attach --probe $probeCmd --exit-after-ms 2000
+      $probeCmd = ('"{0}" hid --vid 0x1209 --pid 0xB007 --usage-page 0xFF00 --usage 0x01 --wait-ms 20000' -f $probeExe)
+      & "$root/build/release/src/phantombt.exe" serve --port $Port --load "$root/profiles/gamepad.json" --attach --probe $probeCmd --exit-after-ms 2000
       $results.realdevice = if ($LASTEXITCODE -eq 0) { "PASS" } else { "FAIL" }
     } else {
       $results.realdevice = "SKIP(no probe)"  # no cppwinrt environment

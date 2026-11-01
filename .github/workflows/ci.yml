@@ -1,0 +1,63 @@
+# CI: Windows + MSVC (Ninja) -- build, unit tests, coverage gate.
+#
+# Deliberately NOT run here:
+# - Real-device legs of tools/run-m0.ps1 .. run-m3.ps1: they need a physical
+#   Bluetooth/USB dongle, the usbip-win2 kernel driver and admin rights
+#   (locally they run loopback-only via -SkipRealDevice, as in run-tests.ps1).
+# - tools/gui-verify.ps1: drives the real GUI (windows, clicks, screenshots)
+#   and requires an interactive desktop session; hosted runners only offer a
+#   non-interactive service session.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  windows-msvc:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python (for tools/cov_gaps.py)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # VsDevCmd equivalent: puts cl/link and the MSVC env on PATH for the
+      # Ninja presets (msvc-debug / debug), same as tools/build.ps1 locally.
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Configure and build (Debug)
+        run: |
+          cmake --preset msvc-debug
+          cmake --build --preset debug
+
+      - name: Unit tests
+        shell: pwsh
+        run: '& .\build\debug\tests\phantombt-tests.exe'
+        # Exit code of the exe propagates; nonzero fails the step.
+
+      - name: Install OpenCppCoverage
+        shell: pwsh
+        run: choco install -y opencppcoverage
+
+      # Rebuild inside is a no-op (build/ already configured+built above);
+      # the script owns the threshold constant and the gate exit code.
+      - name: Coverage gate (threshold lives in tools/coverage-gate.ps1)
+        shell: pwsh
+        run: '& .\tools\coverage-gate.ps1'
+
+      - name: Upload coverage report
+        if: always()  # upload even when the gate fails, for debugging
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            integration-results/coverage.xml
+            integration-results/cov-gaps.json
+          if-no-files-found: warn

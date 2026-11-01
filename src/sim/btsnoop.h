@@ -15,15 +15,16 @@ class BtSnoopWriter {
   ~BtSnoopWriter();
   bool open(const std::string& path);  // 头: "btsnoop\0" + BE u32 1 + BE u32 1002
   void close();
-  void hci_command(const std::vector<uint8_t>& cmd);   // H4 0x01
-  void hci_event(const std::vector<uint8_t>& evt);     // H4 0x04
-  void acl_from_host(const hci::AclFrame& f);          // H4 0x02
-  void acl_to_host(const hci::AclFrame& f);            // H4 0x02
+  void hci_command(const std::vector<uint8_t>& cmd);   // H4 0x01，主机→控制器
+  void hci_event(const std::vector<uint8_t>& evt);     // H4 0x04，控制器→主机
+  void acl_from_host(const hci::AclFrame& f);          // H4 0x02，主机→控制器
+  void acl_to_host(const hci::AclFrame& f);            // H4 0x02，控制器→主机
   uint64_t record_count() const { return records_; }
   bool is_open() const { return f_ != nullptr; }
 
  private:
-  void write_record(uint8_t h4_type, const uint8_t* data, size_t n);
+  // 记录 flags bit0 = 方向：0 主机→控制器 / 1 控制器→主机（Wireshark p2p_dir）
+  void write_record(uint8_t h4_type, const uint8_t* data, size_t n, uint32_t flags);
   std::mutex mx_;
   FILE* f_ = nullptr;
   uint64_t records_ = 0;

@@ -51,14 +51,26 @@ static std::vector<uint8_t> recv_n(net::TcpConn& c, size_t n) {
   return v;
 }
 
+// op_common 请求头：u16 version(0x0111) + u16 code + u32 status(请求恒 0)
+static void send_op(net::TcpConn& c, uint16_t code) {
+  ByteWriter w;
+  w.u16be(OP_VERSION);
+  w.u16be(code);
+  w.u32be(0);
+  send_raw(c, w.buf());
+}
+
 static void import_7_1(net::TcpConn& c) {
   ByteWriter w2;
-  w2.u32be(OP_REQ_IMPORT);
+  w2.u16be(OP_VERSION);
+  w2.u16be(OP_REQ_IMPORT);
+  w2.u32be(0);
   char busid[32] = "7-1";
   w2.bytes((const uint8_t*)busid, 32);
   send_raw(c, w2.buf());
   auto imp = recv_n(c, 8);
-  if (imp[3] != 0x04 || imp[7] != 0x00) throw std::runtime_error("import_7_1: rejected");
+  if (imp[1] != 0x11 || imp[3] != 0x03 || imp[7] != 0x00)
+    throw std::runtime_error("import_7_1: rejected");
   recv_n(c, 312);
 }
 
@@ -72,11 +84,10 @@ PB_TEST(server_devlist_returns_device) {
   auto c = net::TcpConn::connect("127.0.0.1", srv.port(), &err);
   PB_CHECK(c.is_open());
 
-  ByteWriter w1;
-  w1.u32be(OP_REQ_DEVLIST);
-  send_raw(c, w1.buf());
+  send_op(c, OP_REQ_DEVLIST);
   auto head = recv_n(c, 12);
-  PB_CHECK_EQ(head[3], 0x01);   // OP_REP_DEVLIST
+  PB_CHECK_EQ(head[1], 0x11);   // version lo
+  PB_CHECK_EQ(head[3], 0x05);   // OP_REP_DEVLIST（code 低字节）
   PB_CHECK_EQ(head[7], 0x00);   // status
   PB_CHECK_EQ(head[11], 0x01);  // ndev=1
   auto dev = recv_n(c, 312);
@@ -101,22 +112,22 @@ PB_TEST(server_import_and_control_get_descriptor) {
 
   uint8_t setup[8] = {0x80, 6, 0, 1, 0, 0, 18, 0};
   send_cmd(c, 1, 0, DIR_IN, 18, setup, 0);
-  auto ret = recv_n(c, 40 + 18);
+  auto ret = recv_n(c, RET_SUBMIT_HDR_SIZE + 18);
   PB_CHECK_EQ(ret[3], 0x03);   // RET_SUBMIT
   PB_CHECK_EQ(ret[7], 1);      // seqnum
-  PB_CHECK_EQ(ret[40], 18);    // bLength
-  PB_CHECK_EQ(ret[41], 1);     // DT_DEVICE
-  PB_CHECK_EQ(ret[43], 0x02);  // bcdUSB hi
+  PB_CHECK_EQ(ret[48], 18);    // bLength（48B 帧头后接 data）
+  PB_CHECK_EQ(ret[49], 1);     // DT_DEVICE
+  PB_CHECK_EQ(ret[51], 0x02);  // bcdUSB hi
 
   uint8_t setup2[8] = {0x80, 6, 0, 2, 0, 0, 0xFF, 0};
   send_cmd(c, 2, 0, DIR_IN, 255, setup2, 0);
-  auto ret2 = recv_n(c, 40 + 41);
+  auto ret2 = recv_n(c, RET_SUBMIT_HDR_SIZE + 41);
   PB_CHECK_EQ(ret2[7], 2);
-  PB_CHECK_EQ(ret2[42], 41);  // wTotalLength LE
+  PB_CHECK_EQ(ret2[50], 41);  // wTotalLength LE
 
   uint8_t setup3[8] = {0x80, 6, 2, 3, 9, 4, 0xFF, 0};
   send_cmd(c, 3, 0, DIR_IN, 255, setup3, 0);
-  auto ret3 = recv_n(c, 40);
+  auto ret3 = recv_n(c, RET_SUBMIT_HDR_SIZE);
   size_t actual3 = ((size_t)ret3[24] << 24) | ((size_t)ret3[25] << 16) | ((size_t)ret3[26] << 8) | ret3[27];
   PB_CHECK_EQ(actual3, 4u);  // "v"（1 字符）→ 2 头 + 2
   auto sdata = recv_n(c, actual3);
@@ -144,17 +155,17 @@ PB_TEST(server_interrupt_in_pending_then_inject) {
   Sleep(150);
 
   model->inject_input_report({9, 9});
-  auto ret = recv_n(c, 40 + 2);
+  auto ret = recv_n(c, RET_SUBMIT_HDR_SIZE + 2);
   PB_CHECK_EQ(ret[3], 0x03);
   PB_CHECK_EQ(ret[7], 10);
-  PB_CHECK_EQ(ret[40], 9);
-  PB_CHECK_EQ(ret[41], 9);
+  PB_CHECK_EQ(ret[48], 9);
+  PB_CHECK_EQ(ret[49], 9);
 
   model->inject_input_report({0xAB});
   send_cmd(c, 11, 0x81, DIR_IN, 64, zero8, 10);
-  auto ret2 = recv_n(c, 40 + 1);
+  auto ret2 = recv_n(c, RET_SUBMIT_HDR_SIZE + 1);
   PB_CHECK_EQ(ret2[7], 11);
-  PB_CHECK_EQ(ret2[40], 0xAB);
+  PB_CHECK_EQ(ret2[48], 0xAB);
 
   // unlink 挂起的 IN
   send_cmd(c, 12, 0x81, DIR_IN, 64, zero8, 10);
@@ -167,7 +178,7 @@ PB_TEST(server_interrupt_in_pending_then_inject) {
   wu.u32be(0x81);
   wu.u32be(12);
   send_raw(c, wu.buf());
-  auto ru = recv_n(c, 24);
+  auto ru = recv_n(c, RET_UNLINK_HDR_SIZE);
   PB_CHECK_EQ(ru[3], 0x04);
   PB_CHECK_EQ(ru[7], 13);
   int32_t ust = (int32_t)(((uint32_t)ru[20] << 24) | ((uint32_t)ru[21] << 16) | ((uint32_t)ru[22] << 8) | ru[23]);
@@ -185,12 +196,14 @@ PB_TEST(server_import_unknown_busid_rejected) {
   auto c = net::TcpConn::connect("127.0.0.1", srv.port(), &err);
   PB_CHECK(c.is_open());
   ByteWriter w2;
-  w2.u32be(OP_REQ_IMPORT);
+  w2.u16be(OP_VERSION);
+  w2.u16be(OP_REQ_IMPORT);
+  w2.u32be(0);
   char busid[32] = "9-9";
   w2.bytes((const uint8_t*)busid, 32);
   send_raw(c, w2.buf());
   auto imp = recv_n(c, 8);
-  PB_CHECK_EQ(imp[3], 0x04);
+  PB_CHECK_EQ(imp[3], 0x03);  // OP_REP_IMPORT
   PB_CHECK_EQ(imp[7], 0x01);
   c.close();
   srv.stop();
@@ -223,7 +236,7 @@ PB_TEST(server_control_out_set_report_via_data_stage) {
   w3.u8(0xEE);
   w3.u8(0xFF);
   send_raw(c, w3.buf());
-  auto ret = recv_n(c, 40);
+  auto ret = recv_n(c, RET_SUBMIT_HDR_SIZE);
   PB_CHECK_EQ(ret[7], 20);
   auto rep = model->pop_output_report();
   PB_CHECK(rep.has_value());
@@ -247,12 +260,14 @@ PB_TEST(server_bt_loopback_full_init) {
 
   // import 蓝牙适配器（busid 7-2）
   ByteWriter wi;
-  wi.u32be(OP_REQ_IMPORT);
+  wi.u16be(OP_VERSION);
+  wi.u16be(OP_REQ_IMPORT);
+  wi.u32be(0);
   char busid[32] = "7-2";
   wi.bytes((const uint8_t*)busid, 32);
   send_raw(c, wi.buf());
   auto imp = recv_n(c, 8);
-  PB_CHECK_EQ(imp[3], 0x04);
+  PB_CHECK_EQ(imp[3], 0x03);  // OP_REP_IMPORT
   PB_CHECK_EQ(imp[7], 0x00);
   recv_n(c, 312);
 
@@ -273,13 +288,13 @@ PB_TEST(server_bt_loopback_full_init) {
     w2.bytes(setup, 8);
     w2.bytes(cmd.data(), cmd.size());  // data stage
     send_raw(c, w2.buf());
-    auto ret = recv_n(c, 40);
+    auto ret = recv_n(c, RET_SUBMIT_HDR_SIZE);
     PB_CHECK_EQ(ret[3], 0x03);
   };
   auto poll_event = [&]() {
     uint8_t zero8[8] = {};
     send_cmd(c, 2, 0x81, DIR_IN, 16, zero8, 1);
-    auto ret = recv_n(c, 40);
+    auto ret = recv_n(c, RET_SUBMIT_HDR_SIZE);
     PB_CHECK_EQ(ret[3], 0x03);
     int32_t len = (int32_t)(((uint32_t)ret[24] << 24) | ((uint32_t)ret[25] << 16) |
                             ((uint32_t)ret[26] << 8) | ret[27]);
