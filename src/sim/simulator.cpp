@@ -1,12 +1,39 @@
 #include "sim/simulator.h"
 
+#include <atomic>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <sstream>
+#include <thread>
 #include <utility>
 
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <chrono>
+#include <unistd.h>
+using DWORD = unsigned int;
+#ifndef MAX_PATH
+#define MAX_PATH 260
+#endif
+#define INVALID_FILE_ATTRIBUTES (~0u)
+inline DWORD GetEnvironmentVariableA(const char* name, char* buf, DWORD cap) {
+  const char* v = std::getenv(name);
+  if (!v || cap == 0) return 0;
+  std::snprintf(buf, cap, "%s", v);
+  return (DWORD)std::strlen(buf);
+}
+inline DWORD GetFileAttributesA(const char* path) {
+  return ::access(path, F_OK) == 0 ? 0u : INVALID_FILE_ATTRIBUTES;
+}
+inline DWORD SearchPathA(const char*, const char*, const char*, DWORD, char*, char**) { return 0; }
+inline void Sleep(DWORD ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); }
+inline FILE* _popen(const char* cmd, const char* mode) { return ::popen(cmd, mode); }
+inline int _pclose(FILE* f) { return ::pclose(f); }
+#endif
 
 #include "core/bt_radio.h"
 #include "core/bytes.h"

@@ -128,10 +128,10 @@ PB_TEST(bug_cli_stoi_valid_values_and_flags_unchanged) {
   PB_CHECK(a.ok);
   PB_CHECK_EQ(a.port, 3425);
   PB_CHECK_EQ(a.exit_after_ms, 100);
-  // 默认值不变
+  // 默认端口与 GUI / 脚本 / README 的 3425 一致
   auto d = cli::parse_serve_args({});
   PB_CHECK(d.ok);
-  PB_CHECK_EQ(d.port, 3240);
+  PB_CHECK_EQ(d.port, 3425);
   PB_CHECK_EQ(d.exit_after_ms, 0);
   // --port 0 沿用"随机端口"语义（selftest 同款），未被新校验误伤
   auto z = cli::parse_serve_args({"--port", "0"});

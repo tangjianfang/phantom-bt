@@ -40,29 +40,15 @@ AdapterModel::AdapterModel(const pb::hci::ControllerConfig& cfg, uint32_t busnum
       {0x02, 2, 512, 0},  // ACL OUT：HS bulk 只允许 512
       {0x82, 2, 512, 0},  // ACL IN：HS bulk 只允许 512
   };
-  pb::usb::InterfaceDef i1;  // SCO：仅空 alt0（无端点）
+  // SCO：仅空 alt0、无端点。USB/IP 应答的 number_of_packets 恒为 0（不支持 iso URB），
+  // 描述符若再宣告等时端点，主机切到非零 alt 时会按未定义方式失败。空 alt0 与传输能力一致。
+  pb::usb::InterfaceDef i1;
   i1.number = 1;
+  i1.alt_setting = 0;
   i1.iclass = 0xE0;
   i1.isubclass = 0x01;
   i1.iprotocol = 0x01;
-  (void)i1;
-  // SCO 语音接口：alt 0..6 阶梯——每档（含 alt0）都带 2 个等时端点，载荷 0/9/17/25/33/49/63B，
-  // 与 DeckBtService/VirtBthUsb 在 usbip-win2 上已验证的形态逐字节一致（含 alt0 的 size-0 端点对）。
-  c.interfaces = {i0};
-  {
-    const uint16_t kScoSizes[] = {0, 9, 17, 25, 33, 49, 63};
-    for (uint8_t alt = 0; alt < 7; ++alt) {
-      pb::usb::InterfaceDef s;
-      s.number = 1;
-      s.alt_setting = alt;
-      s.iclass = 0xE0;
-      s.isubclass = 0x01;
-      s.iprotocol = 0x01;
-      s.endpoints = {{0x03, 1, kScoSizes[alt], 4},  // iso OUT（attributes=1 等时）
-                     {0x83, 1, kScoSizes[alt], 4}};  // iso IN
-      c.interfaces.push_back(s);
-    }
-  }
+  c.interfaces = {i0, i1};
   // 无 IAD：本机实测 usbhub 未插 usbccgp（BTHUSB 直接以设备级 E0/01/01 兼容 ID 绑定
   // 整机），同构项目 DeckBtService 的已验证形态亦无 IAD；去除以贴合该形态
 

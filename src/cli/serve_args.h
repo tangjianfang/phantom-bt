@@ -14,7 +14,8 @@ namespace pb::cli {
 struct ServeArgs {
   bool ok = true;     // false = 用法错误（error 给出可读原因）
   std::string error;  // ok=false 时的原因（如 "--port requires a value"）
-  uint16_t port = 3240;
+  // 与 GUI / tools/*.ps1 / README 的默认端口一致（3240 常被同机其它 usbip 占用）。
+  uint16_t port = 3425;
   int exit_after_ms = 0;
   bool load_bt = false;
   bool attach = false;

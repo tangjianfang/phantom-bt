@@ -94,6 +94,10 @@ PB_TEST(smp_s1_definition) {
 PB_TEST(smp_just_works_exchange) {
   ble::SmpResponder smp;
   PB_CHECK(!smp.paired());
+  uint8_t central[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
+  uint8_t periph[6] = {0x55, 0x44, 0x33, 0x22, 0x11, 0xC0};
+  smp.set_connection_addresses(central, 0, periph, 1);
+  PB_CHECK(smp.has_addresses());
 
   // 1) Pairing Request（io=3 oob=0 auth=0 max=16 init=3）
   uint8_t preq[7] = {0x01, 0x03, 0x00, 0x00, 0x10, 0x03, 0x00};
@@ -101,30 +105,34 @@ PB_TEST(smp_just_works_exchange) {
   PB_CHECK(pres.has_value());
   PB_CHECK_EQ((*pres)[0], 0x02);  // Pairing Response
   PB_CHECK_EQ((*pres)[1], 0x03);  // NoInputNoOutput → Just Works
+  PB_CHECK_EQ((*pres)[4], 0x10);  // MaxEncryptionKeySize = 16
   PB_CHECK(!smp.paired());
 
-  // 2) Pairing Confirm（主机侧值不影响我方应答计算）
-  uint8_t confirm[17] = {0x03};
-  for (int i = 0; i < 16; ++i) confirm[1 + i] = (uint8_t)(0xA0 + i);
-  auto crsp = smp.handle(confirm, 17);
+  // 2) Pairing Confirm：主机 confirm 必须按真实地址算出来
+  uint8_t mrand[16];
+  for (int i = 0; i < 16; ++i) mrand[i] = (uint8_t)(0x50 + i);
+  uint8_t tk[16] = {0};
+  uint8_t ia[6], ra[6];
+  ble::SmpResponder::pack_c1_address(central, ia);
+  ble::SmpResponder::pack_c1_address(periph, ra);
+  auto host_c = ble::SmpResponder::c1(tk, mrand, preq, pres->data(), 0, ia, 1, ra);
+  std::vector<uint8_t> confirm{0x03};
+  confirm.insert(confirm.end(), host_c.begin(), host_c.end());
+  auto crsp = smp.handle(confirm.data(), confirm.size());
   PB_CHECK(crsp.has_value());
   PB_CHECK_EQ((*crsp)[0], 0x03);  // Pairing Confirm
 
   // 3) Pairing Random → Random + paired
-  uint8_t random[17] = {0x04};
-  for (int i = 0; i < 16; ++i) random[1 + i] = (uint8_t)(0x50 + i);
-  auto rrsp = smp.handle(random, 17);
+  std::vector<uint8_t> random{0x04};
+  random.insert(random.end(), mrand, mrand + 16);
+  auto rrsp = smp.handle(random.data(), random.size());
   PB_CHECK(rrsp.has_value());
-  PB_CHECK_EQ((*rrsp)[0], 0x04);  // Pairing Random（高优#6：回 0x05=Pairing Failed 会让主机中止配对）
+  PB_CHECK_EQ((*rrsp)[0], 0x04);  // Pairing Random（回 0x05=Pairing Failed 会让主机中止配对）
   PB_CHECK(smp.paired());
 
   // STK = s1(TK=0, Srand, Mrand) 独立复算
-  uint8_t tk[16] = {0};
-  uint8_t srand[16], mrand[16];
-  for (int i = 0; i < 16; ++i) {
-    srand[i] = (uint8_t)(0x10 + i);
-    mrand[i] = (uint8_t)(0x50 + i);
-  }
+  uint8_t srand[16];
+  for (int i = 0; i < 16; ++i) srand[i] = (uint8_t)(0x10 + i);
   auto expect = ble::SmpResponder::s1(tk, srand, mrand);
   PB_CHECK(std::equal(expect.begin(), expect.end(), smp.stk()));
 }

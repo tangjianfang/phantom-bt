@@ -38,7 +38,17 @@ void DeviceStack::rewire() {
     }
     return rsp ? *rsp : std::vector<uint8_t>{};
   };
-  demux_->on_sm = [smp](const std::vector<uint8_t>& payload) {
+  demux_->on_sm = [this, smp](const std::vector<uint8_t>& payload) {
+    uint8_t central[6];
+    uint8_t periph[6];
+    const auto& bd = controller_.config().bd_addr;
+    uint64_t peer = controller_.connection_peer();
+    for (int i = 0; i < 6; ++i) {
+      central[i] = bd[i];
+      periph[i] = (uint8_t)((peer >> (8 * i)) & 0xFF);
+    }
+    // 本控制器身份地址按 public；对端类型来自 LE_Create_Connection。
+    smp->set_connection_addresses(central, 0, periph, controller_.connection_peer_type());
     auto rsp = smp->handle(payload.data(), payload.size());
     return rsp ? *rsp : std::vector<uint8_t>{};
   };

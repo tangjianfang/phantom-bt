@@ -13,21 +13,47 @@ std::string usage() {
          "sys-bt <list|disable|enable> | snoop <path>|off | status | help";
 }
 
-static std::vector<std::string> split(const std::string& line) {
+std::vector<std::string> tokenize(const std::string& line) {
   std::vector<std::string> out;
-  std::istringstream ss(line);
-  std::string tok;
-  while (ss >> tok) out.push_back(tok);
+  std::string cur;
+  bool in_quote = false;
+  for (size_t i = 0; i < line.size(); ++i) {
+    char c = line[i];
+    if (in_quote) {
+      if (c == '"') in_quote = false;
+      else cur.push_back(c);
+    } else if (c == '"') {
+      in_quote = true;
+    } else if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+      if (!cur.empty()) {
+        out.push_back(cur);
+        cur.clear();
+      }
+    } else {
+      cur.push_back(c);
+    }
+  }
+  if (!cur.empty()) out.push_back(cur);
   return out;
 }
 
+std::string join_tokens(const std::vector<std::string>& args, size_t from) {
+  if (from >= args.size()) return {};
+  std::string s = args[from];
+  for (size_t i = from + 1; i < args.size(); ++i) {
+    s.push_back(' ');
+    s += args[i];
+  }
+  return s;
+}
+
 std::vector<std::string> execute(sim::Simulator& sim, const std::string& line) {
-  auto args = split(line);
+  auto args = tokenize(line);
   if (args.empty()) return {"ERR empty command"};
   const std::string& cmd = args[0];
   try {
-    if (cmd == "load-hid" && args.size() == 2) {
-      return {"OK " + sim.cmd_load_hid_profile(args[1])};
+    if (cmd == "load-hid" && args.size() >= 2) {
+      return {"OK " + sim.cmd_load_hid_profile(join_tokens(args, 1))};
     }
     if (cmd == "load-bt") {
       return {"OK " + sim.cmd_load_bt_adapter()};
@@ -38,8 +64,8 @@ std::vector<std::string> execute(sim::Simulator& sim, const std::string& line) {
     if (cmd == "unload-all") {
       return {"OK " + sim.cmd_unload_all()};
     }
-    if (cmd == "ble-advertise" && args.size() == 2) {
-      return {sim.cmd_ble_advertise(args[1])};
+    if (cmd == "ble-advertise" && args.size() >= 2) {
+      return {sim.cmd_ble_advertise(join_tokens(args, 1))};
     }
     if (cmd == "ble-stop" && args.size() == 2) {
       return {"OK " + sim.cmd_ble_stop(args[1])};
@@ -59,8 +85,8 @@ std::vector<std::string> execute(sim::Simulator& sim, const std::string& line) {
     if (cmd == "ble-list") {
       return {"OK", sim.cmd_ble_list(), "OK-END"};
     }
-    if (cmd == "ble-type" && args.size() == 3) {
-      return {"OK " + sim.cmd_ble_type(args[1], args[2])};
+    if (cmd == "ble-type" && args.size() >= 3) {
+      return {"OK " + sim.cmd_ble_type(args[1], join_tokens(args, 2))};
     }
     if (cmd == "list") {
       std::vector<std::string> out;
@@ -84,8 +110,8 @@ std::vector<std::string> execute(sim::Simulator& sim, const std::string& line) {
       auto bytes = from_hex(args[2]);
       return {"OK " + sim.cmd_inject(args[1], bytes)};
     }
-    if (cmd == "snoop" && args.size() == 2) {
-      return {"OK " + sim.cmd_snoop(args[1])};
+    if (cmd == "snoop" && args.size() >= 2) {
+      return {"OK " + sim.cmd_snoop(join_tokens(args, 1))};
     }
     if (cmd == "status") {
       return {"OK " + sim.cmd_status()};

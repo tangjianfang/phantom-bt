@@ -55,39 +55,76 @@ std::array<uint8_t, 16> SmpResponder::c1(const uint8_t tk[16], const uint8_t ran
   return out;
 }
 
+void SmpResponder::pack_c1_address(const uint8_t lsb[6], uint8_t display[6]) {
+  for (int i = 0; i < 6; ++i) display[i] = lsb[5 - i];
+}
+
+void SmpResponder::set_connection_addresses(const uint8_t central_lsb[6], uint8_t central_type,
+                                           const uint8_t peripheral_lsb[6], uint8_t peripheral_type) {
+  pack_c1_address(central_lsb, ia_);
+  pack_c1_address(peripheral_lsb, ra_);
+  iat_ = central_type ? 1 : 0;
+  rat_ = peripheral_type ? 1 : 0;
+  addrs_set_ = addresses_nonzero();
+}
+
+bool SmpResponder::addresses_nonzero() const {
+  for (int i = 0; i < 6; ++i)
+    if (ia_[i] | ra_[i]) return true;
+  return false;
+}
+
+std::array<uint8_t, 7> SmpResponder::pairing_response() const {
+  // MaxEncryptionKeySize = 16，与实际 16 字节 STK 一致（规范下限 7 会让主机截短密钥）
+  return {0x02, 0x03, 0x00, preq_[3], 0x10, 0x02, 0x02};
+}
+
 std::optional<std::vector<uint8_t>> SmpResponder::handle(const uint8_t* pdu, size_t n) {
   if (n < 1) return std::nullopt;
   uint8_t code = pdu[0];
 
   switch (code) {
     case 0x01: {  // Pairing Request（主机发起）
-      if (n < 7) return std::vector<uint8_t>{0x05, 0x01, 0x00, 0x0A};  // Pairing Failed: Invalid params
+      if (n < 7) return std::vector<uint8_t>{0x05, 0x0A};  // Pairing Failed: Invalid Parameters（2 字节）
       std::memcpy(preq_.data(), pdu, 7);
-      // 应答：IO=NoInputNoOutput(3)、OOB=0、authreq=保持主机值、key dist 最小
-      return std::vector<uint8_t>{0x02, 0x03, 0x00, pdu[3], 0x07, 0x02, 0x02};
+      confirm_checked_ = false;
+      paired_ = false;
+      auto pres = pairing_response();
+      return std::vector<uint8_t>(pres.begin(), pres.end());
     }
-    case 0x03: {  // Pairing Confirm（主机 c1(TK=0, Mrand,...)）
+    case 0x03: {  // Pairing Confirm（主机 c1(TK=0, Mrand, 真实地址)）
       if (n < 17) return std::nullopt;
-      std::memcpy(mconfirm_.data(), pdu + 1, 16);  // Random 阶段校验用
-      // 我们生成 Srand 并回 Confirm（TK=0 Just Works）
+      std::memcpy(mconfirm_.data(), pdu + 1, 16);
+      if (!addrs_set_ || !addresses_nonzero()) {
+        // 没有连接双方的真实地址就不能算 confirm；禁止退回全 0 地址。
+        return std::vector<uint8_t>{0x05, 0x04};  // Confirm Value Failed
+      }
       for (int i = 0; i < 16; ++i) srand_[i] = (uint8_t)(0x10 + i);
       uint8_t tk[16] = {0};
-      uint8_t pres[7] = {0x02, 0x03, 0x00, preq_[3], 0x07, 0x02, 0x02};
-      // 地址对 Just Works 全 0（进程内伪造链路，无真实射频）
-      uint8_t zero6[6] = {0};
-      auto confirm = c1(tk, srand_.data(), preq_.data(), pres, 0, zero6, 0, zero6);
+      auto pres = pairing_response();
+      auto confirm = c1(tk, srand_.data(), preq_.data(), pres.data(), iat_, ia_, rat_, ra_);
       std::vector<uint8_t> rsp{0x03};
       rsp.insert(rsp.end(), confirm.begin(), confirm.end());
       return rsp;
     }
-    case 0x04: {  // Pairing Random（主机 Mrand）
+    case 0x04: {  // Pairing Random（主机 Mrand）—— 先复核主机 confirm
       if (n < 17) return std::nullopt;
       std::memcpy(mrand_, pdu + 1, 16);
+      if (!addrs_set_ || !addresses_nonzero()) {
+        paired_ = false;
+        return std::vector<uint8_t>{0x05, 0x04};
+      }
       uint8_t tk[16] = {0};
+      auto pres = pairing_response();
+      auto expect = c1(tk, mrand_, preq_.data(), pres.data(), iat_, ia_, rat_, ra_);
+      if (std::memcmp(expect.data(), mconfirm_.data(), 16) != 0) {
+        paired_ = false;
+        confirm_checked_ = false;
+        return std::vector<uint8_t>{0x05, 0x04};  // Confirm Value Failed（2 字节）
+      }
+      confirm_checked_ = true;
       stk_ = s1(tk, srand_.data(), mrand_);
       paired_ = true;
-      // Vol 3 Part H 3.3：对 Pairing Random 应回 0x04 + Srand
-      //（回 0x05=Pairing Failed 会让合规主机立即中止配对）
       std::vector<uint8_t> rsp{0x04};
       rsp.insert(rsp.end(), srand_.begin(), srand_.end());
       return rsp;

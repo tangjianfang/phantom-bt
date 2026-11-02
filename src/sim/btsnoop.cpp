@@ -2,7 +2,11 @@
 
 #include <cstring>
 
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <ctime>
+#endif
 
 #include "core/bytes.h"
 
@@ -15,10 +19,17 @@ constexpr uint64_t kBtsnoopEpochUs = 0x00E03AB1A6764000ull;
 //（11644473600 秒 × 1e7）；漏减这一项会把记录时间多算约 369 年
 constexpr uint64_t kUnixEpochFiletime = 116444736000000000ull;
 uint64_t now_us_since_epoch() {
+#ifdef _WIN32
   FILETIME ft;
   GetSystemTimeAsFileTime(&ft);
   uint64_t t = ((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime;  // 1601 起 100ns
   return (t - kUnixEpochFiletime) / 10 + kBtsnoopEpochUs;  // unix µs → btsnoop 纪元
+#else
+  timespec ts{};
+  clock_gettime(CLOCK_REALTIME, &ts);
+  uint64_t unix_us = (uint64_t)ts.tv_sec * 1000000ull + (uint64_t)ts.tv_nsec / 1000ull;
+  return unix_us + kBtsnoopEpochUs;
+#endif
 }
 }  // namespace
 
