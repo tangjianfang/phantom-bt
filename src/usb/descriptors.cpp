@@ -1,6 +1,7 @@
 #include "usb/descriptors.h"
 
 #include <cstring>
+#include <set>
 
 #include "core/bytes.h"
 
@@ -91,7 +92,12 @@ std::vector<uint8_t> build_config_descriptor(const ConfigParams& c) {
   w.u8(9);
   w.u8(DT_CONFIG);
   w.u16le(total);
-  w.u8((uint8_t)c.interfaces.size());
+  // bNumInterfaces = 不同接口号的个数（同一接口的多个 alt setting 不重复计数，USB §9.5）
+  {
+    std::set<uint8_t> distinct;
+    for (const auto& i : c.interfaces) distinct.insert(i.number);
+    w.u8((uint8_t)distinct.size());
+  }
   w.u8(1);  // bConfigurationValue
   w.u8(0);  // iConfiguration
   w.u8(attributes_byte(c));

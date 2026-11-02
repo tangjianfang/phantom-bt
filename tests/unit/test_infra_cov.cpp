@@ -322,7 +322,7 @@ PB_TEST(cov_infra_probe_ble_valid_addr_json_contract) {
 // 清理时释放），但该修复此前无任何测试锚定。真机半边（usbip.exe 双 attach）由
 // tools/check-tools.ps1 的 H4 节覆盖；此处覆盖回环半边：
 //   1) 两条连接并发 import 两个不同设备 → 均成功，且各自的控制传输走各自的
-//      sink（描述符 vid 不同：vendor HID 0x1209 vs 蓝牙适配器 0x0B00）；
+//      sink（描述符 vid 不同：vendor HID 0x1209 vs 蓝牙适配器 0x0CF3）；
 //   2) 第二条连接 import 已被占用的 busid → OP_REP_IMPORT status=1（守卫），
 //      且被拒连接仍留在控制循环（DEVLIST 照常应答）；
 //   3) 占用连接断开后 busid 被释放 → 同一连接重试 import 成功、sink 正常服务。
@@ -392,7 +392,7 @@ std::shared_ptr<hid::HidModel> cov_infra_add_vendor_device(sim::DeviceRegistry& 
 
 // 两条连接并发导入两个不同设备（vendor HID 7-1 + 虚拟蓝牙适配器 7-2）：均成功、
 // 各自 sink 各自服务——GET_DESCRIPTOR(device) 的 idVendor 必须分别是 0x1209 与
-// 0x0B00（adapter_model.cpp:18），证明并发导入后设备模型与连接一一对应。
+// 0x0CF3（adapter_model.cpp），证明并发导入后设备模型与连接一一对应。
 PB_TEST(cov_infra_two_devices_concurrent_import) {
   net::WsaSession w;
   sim::DeviceRegistry reg;
@@ -428,7 +428,7 @@ PB_TEST(cov_infra_two_devices_concurrent_import) {
   int vid1 = r1[hd + 8] | (r1[hd + 9] << 8);  // idVendor LE
   int vid2 = r2[hd + 8] | (r2[hd + 9] << 8);
   PB_CHECK_EQ(vid1, 0x1209);  // vendor HID
-  PB_CHECK_EQ(vid2, 0x0B00);  // 蓝牙适配器
+  PB_CHECK_EQ(vid2, 0x0CF3);  // 蓝牙适配器（Qualcomm，对齐 DeckBtService 已验证组合）
   c1.close();
   c2.close();
   srv.stop();

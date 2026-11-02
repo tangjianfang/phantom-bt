@@ -2,6 +2,7 @@
 
 #include <cstdio>
 
+#include "core/log.h"
 #include "usb/descriptors.h"
 
 namespace pb::bt {
@@ -15,8 +16,10 @@ AdapterModel::AdapterModel(const pb::hci::ControllerConfig& cfg, uint32_t busnum
     flush_acl_if_pending();
   };
   pb::usb::ConfigParams c;
-  c.vid = 0x0B00;  // 测试用非常见 VID：避免 Windows 触发厂商初始化路径（R-111 缓解）
-  c.pid = 0x0001;
+  // VID/PID 对齐 DeckBtService 已验证组合（Qualcomm QCA 系列）：0x0B00 撞 INGENICO 且
+  // 未经蓝牙栈验证；真实厂商 ID 与 BTHUSB 的兼容已由 DeckBtService 实证
+  c.vid = 0x0CF3;
+  c.pid = 0x6390;
   c.product = "Phantom-BT Radio";
   c.manufacturer = "Phantom-BT";
   c.serial = "PB-RADIO-0001";
@@ -42,7 +45,24 @@ AdapterModel::AdapterModel(const pb::hci::ControllerConfig& cfg, uint32_t busnum
   i1.iclass = 0xE0;
   i1.isubclass = 0x01;
   i1.iprotocol = 0x01;
-  c.interfaces = {i0, i1};
+  (void)i1;
+  // SCO 语音接口：alt 0..6 阶梯——每档（含 alt0）都带 2 个等时端点，载荷 0/9/17/25/33/49/63B，
+  // 与 DeckBtService/VirtBthUsb 在 usbip-win2 上已验证的形态逐字节一致（含 alt0 的 size-0 端点对）。
+  c.interfaces = {i0};
+  {
+    const uint16_t kScoSizes[] = {0, 9, 17, 25, 33, 49, 63};
+    for (uint8_t alt = 0; alt < 7; ++alt) {
+      pb::usb::InterfaceDef s;
+      s.number = 1;
+      s.alt_setting = alt;
+      s.iclass = 0xE0;
+      s.isubclass = 0x01;
+      s.iprotocol = 0x01;
+      s.endpoints = {{0x03, 1, kScoSizes[alt], 4},  // iso OUT（attributes=1 等时）
+                     {0x83, 1, kScoSizes[alt], 4}};  // iso IN
+      c.interfaces.push_back(s);
+    }
+  }
   // 无 IAD：本机实测 usbhub 未插 usbccgp（BTHUSB 直接以设备级 E0/01/01 兼容 ID 绑定
   // 整机），同构项目 DeckBtService 的已验证形态亦无 IAD；去除以贴合该形态
 
@@ -81,6 +101,9 @@ void AdapterModel::attach_sink(pb::usb::IUsbModelSink* s) {
 std::vector<uint8_t> AdapterModel::on_control(const pb::usb::ControlSetup& s,
                                               const std::vector<uint8_t>& data) {
   std::vector<uint8_t> out;
+  PB_LOG_INFO("bt ctrl: bm=0x" + std::to_string(s.bmRequestType) + " req=" +
+               std::to_string(s.bRequest) + " wValue=0x" + std::to_string(s.wValue) +
+               " wLen=" + std::to_string(s.wLength) + " data=" + std::to_string(data.size()));
   if (pb::usb::descriptor_request(s, store_, out)) return out;
 
   uint8_t type = s.bmRequestType & 0x60;
@@ -97,6 +120,8 @@ std::vector<uint8_t> AdapterModel::on_control(const pb::usb::ControlSetup& s,
     return {};
   }
 
+  PB_LOG_WARN("bt STALL: bm=0x" + std::to_string(s.bmRequestType) + " req=" +
+              std::to_string(s.bRequest) + " wValue=0x" + std::to_string(s.wValue));
   throw pb::usb::ControlStall("bt: unsupported control request");
 }
 

@@ -46,11 +46,12 @@ PB_TEST(bt_adapter_descriptors_match_spec) {
   PB_CHECK_EQ(dev[6], 0x01);
   PB_CHECK_EQ(dev[7], 64);
   auto cfg = m.on_control(pb::usb::parse_setup(su8(0x80, 0x06, 0x0200, 0, 255).data()), {});
-  // 9(config) + [9(if0) + 7×3(EP)] + 9(if1) = 48（无 IAD：贴合已验证形态，usbhub 未插 usbccgp）
-  PB_CHECK_EQ(cfg.size(), 48u);
-  PB_CHECK_EQ(cfg[2], 48);  // wTotalLength LE
-  PB_CHECK_EQ(cfg[3], 0);
-  PB_CHECK_EQ(cfg[4], 2);
+  // 9(config) + [9(if0) + 7×3(EP)] + 7×[9(if1 alt) + 7×2(iso EP)] = 200
+  // （SCO alt 0..6 阶梯逐字节对齐 DeckBtService 已验证形态；无 IAD）
+  PB_CHECK_EQ(cfg.size(), 200u);
+  PB_CHECK_EQ(cfg[2], 200);  // wTotalLength LE（0x00C8）
+  PB_CHECK_EQ(cfg[3], 0x00);
+  PB_CHECK_EQ(cfg[4], 2);      // bNumInterfaces = 不同接口号数（alt 不重复计数）
   PB_CHECK_EQ(cfg[9], 9);      // if0@9 bLength
   PB_CHECK_EQ(cfg[10], 0x04);  // DT_INTERFACE
   PB_CHECK_EQ(cfg[14], 0xE0);  // if0 class（if0@9, class@9+5）
@@ -66,8 +67,19 @@ PB_TEST(bt_adapter_descriptors_match_spec) {
   PB_CHECK_EQ(cfg[35], 2);
   PB_CHECK_EQ(cfg[36], 0x00);  // wMaxPacketSize 512 LE
   PB_CHECK_EQ(cfg[37], 0x02);
-  PB_CHECK_EQ(cfg[43], 0);      // if1@39 numEP=0（空 SCO alt0）
-  PB_CHECK_EQ(cfg[44], 0xE0);   // if1 class
+  // if1 SCO alt 阶梯：alt_n 接口描述符 @ 39 + n×23；每档含 2 个等时端点（0x03/0x83）
+  PB_CHECK_EQ(cfg[39], 9);   // if1 alt0 bLength
+  PB_CHECK_EQ(cfg[41], 1);   // if1 number
+  PB_CHECK_EQ(cfg[42], 0);   // alt0
+  PB_CHECK_EQ(cfg[43], 2);   // alt0 也带 2 个 size-0 等时端点（DeckBtService 形态）
+  PB_CHECK_EQ(cfg[44], 0xE0);
+  PB_CHECK_EQ(cfg[46], 0x01);   // if1 protocol
+  PB_CHECK_EQ(cfg[50], 0x03);   // alt0 iso OUT EP addr（EP@48）
+  PB_CHECK_EQ(cfg[51], 1);      // 等时
+  PB_CHECK_EQ(cfg[65], 1);      // if1 alt1 的 alt 设置位（接口描述符 @39+23=62，alt@65）
+  PB_CHECK_EQ(cfg[75], 9);      // alt1 iso OUT wMaxPacketSize L（EP@71, max@75）
+  PB_CHECK_EQ(cfg[197], 63);    // alt6 iso IN wMaxPacketSize L（接口@177，IN EP@193，max@197）
+  PB_CHECK_EQ(cfg[198], 0);     // 高字节
 }
 
 PB_TEST(bt_adapter_hci_over_ep0_and_event_intr) {
