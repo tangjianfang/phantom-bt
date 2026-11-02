@@ -20,4 +20,10 @@ namespace pb::control {
 std::vector<std::string> execute(sim::Simulator& sim, const std::string& line);
 std::string usage();
 
+// 引号感知的切分：双引号内的空格属于同一个 token。无引号时由 execute 再把
+// 路径 / ble-type 文本的剩余 token 用空格拼回去。
+std::vector<std::string> tokenize(const std::string& line);
+// 从 args[from] 起用单个空格拼回（路径或 ble-type 文本）。
+std::string join_tokens(const std::vector<std::string>& args, size_t from);
+
 }  // namespace pb::control

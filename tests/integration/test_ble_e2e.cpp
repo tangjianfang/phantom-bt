@@ -173,23 +173,33 @@ PB_TEST(e2e_smp_just_works_over_l2cap) {
     if (!parse_l2cap(f.data, cid, payload)) return std::nullopt;
     return payload;
   };
-  auto r1 = step({0x01, 0x03, 0x00, 0x00, 0x10, 0x03, 0x00});
+  uint8_t preq[7] = {0x01, 0x03, 0x00, 0x00, 0x10, 0x03, 0x00};
+  auto r1 = step(std::vector<uint8_t>(preq, preq + 7));
   PB_CHECK(r1.has_value());
   PB_CHECK_EQ((*r1)[0], 0x02);
-  auto r2 = step([&] {
-    std::vector<uint8_t> p{0x03};
-    for (int i = 0; i < 16; ++i) p.push_back((uint8_t)(0xA0 + i));
-    return p;
-  }());
+  PB_CHECK_EQ((*r1).size(), 7u);
+  uint8_t mrand[16];
+  for (int i = 0; i < 16; ++i) mrand[i] = (uint8_t)(0x50 + i);
+  uint8_t tk[16] = {0};
+  uint8_t clsb[6], plsb[6], ia[6], ra[6];
+  for (int i = 0; i < 6; ++i) {
+    clsb[i] = t.controller.config().bd_addr[i];
+    plsb[i] = (uint8_t)((t.controller.connection_peer() >> (8 * i)) & 0xFF);
+  }
+  ble::SmpResponder::pack_c1_address(clsb, ia);
+  ble::SmpResponder::pack_c1_address(plsb, ra);
+  auto host_c = ble::SmpResponder::c1(tk, mrand, preq, r1->data(), 0, ia,
+                                      t.controller.connection_peer_type(), ra);
+  std::vector<uint8_t> cmsg{0x03};
+  cmsg.insert(cmsg.end(), host_c.begin(), host_c.end());
+  auto r2 = step(cmsg);
   PB_CHECK(r2.has_value());
   PB_CHECK_EQ((*r2)[0], 0x03);
-  auto r3 = step([&] {
-    std::vector<uint8_t> p{0x04};
-    for (int i = 0; i < 16; ++i) p.push_back((uint8_t)(0x50 + i));
-    return p;
-  }());
+  std::vector<uint8_t> rmsg{0x04};
+  rmsg.insert(rmsg.end(), mrand, mrand + 16);
+  auto r3 = step(rmsg);
   PB_CHECK(r3.has_value());
-  PB_CHECK_EQ((*r3)[0], 0x04);  // 高优#6：Pairing Random 应答须回显 0x04（0x05=Pairing Failed）
+  PB_CHECK_EQ((*r3)[0], 0x04);  // Pairing Random 应答须回显 0x04（0x05=Pairing Failed）
   PB_CHECK(t.stack->smp().paired());
 }
 

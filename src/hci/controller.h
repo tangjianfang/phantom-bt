@@ -66,6 +66,7 @@ class MiniController {
   bool has_connection() const { return conn_handle_ != 0; }
   uint16_t connection_handle() const { return conn_handle_; }
   uint64_t connection_peer() const { return conn_peer_; }
+  uint8_t connection_peer_type() const { return conn_peer_type_; }  // 0=public 1=random
   void simulate_disconnect(uint8_t reason);  // 断开当前连接（设备侧/测试触发）
 
   // —— M3 链路数据面 ——
@@ -111,6 +112,7 @@ class MiniController {
   uint16_t conn_handle_ = 0;
   uint16_t next_handle_ = 0x0001;
   uint64_t conn_peer_ = 0;
+  uint8_t conn_peer_type_ = 0;  // LE_Create_Connection 的 peer address type
 };
 
 // 命令在 Supported Commands 位图（Vol 4 Part E §6.27 规范表格）中的位号；

@@ -21,8 +21,12 @@ static void install_silent_crash_reporting() {
   });
 }
 
+// tests/unit/test_arch_contracts.cpp 注册到本 runner（链接锚点，避免 TU 被漏掉）。
+extern "C" int pb_arch_contracts_anchor();
+
 int main(int argc, char** argv) {
   install_silent_crash_reporting();
+  (void)pb_arch_contracts_anchor();
   SetCurrentDirectoryA(PB_SOURCE_DIR);  // 测试以仓库根为工作目录（读取 profiles/ 等）
   return pb::TestRegistry::instance().run_all(argc > 1 ? argv[1] : "");
 }

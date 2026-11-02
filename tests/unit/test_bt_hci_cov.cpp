@@ -330,12 +330,12 @@ PB_TEST(bug_iad_doc_bt_adapter_config_no_iad_hs_form) {
   // 设计 R3'（IAD 双接口聚合）已撤销：本机实测 usbhub 未插 usbccgp（BTHUSB 以设备级
   // E0/01/01 兼容 ID 绑定整机），同构项目 DeckBtService 的已验证形态亦无 IAD；
   // 且 HS 化（bcdUSB 2.00 + bulk 512 + speed=3）为 usbip-win2 UDE 根集线器校验前提。
-  // 配置 = 9 + [9+7×3](if0) + 7×[9+7×2](SCO alt0..6 阶梯) = 200（无 8B IAD 块）
+  // 配置 = 9 + [9+7×3](if0) + 9(if1 空 alt0) = 48（无 IAD、无等时端点）
   pb::bt::AdapterModel m(pb::hci::ControllerConfig{}, 7, 2);
   const uint8_t get_cfg[8] = {0x80, 0x06, 0x00, 0x02, 0x00, 0x00, 0xFF, 0x00};  // GET_DESCRIPTOR config
   auto cfg = m.on_control(pb::usb::parse_setup(get_cfg), {});
-  PB_CHECK_EQ(cfg.size(), 200u);
-  PB_CHECK_EQ(cfg[2], 200u);  // wTotalLength L（0xC8）
+  PB_CHECK_EQ(cfg.size(), 48u);
+  PB_CHECK_EQ(cfg[2], 48u);  // wTotalLength L（0x30）
   PB_CHECK_EQ(cfg[3], 0u);    // wTotalLength H
   PB_CHECK_EQ(cfg[4], 2u);    // bNumInterfaces（alt 不重复计数）
   // if0 直接位于 config 之后（@9），无 IAD 前缀：bLength=9 / type=4 / number=0 / 3 端点 / E0/01/01
@@ -344,13 +344,12 @@ PB_TEST(bug_iad_doc_bt_adapter_config_no_iad_hs_form) {
   PB_CHECK_EQ(cfg[11], 0u);   // if0 number
   PB_CHECK_EQ(cfg[13], 3u);   // if0 bNumEndpoints
   PB_CHECK_EQ(cfg[14], 0xE0u);
-  // if1（@39）不在任何 IAD 内：alt0 也带 2 个 size-0 等时端点（DeckBtService 形态）
+  // if1（@39）空 alt0：bNumEndpoints=0，与 USB/IP 不支持 iso 的传输能力一致
   PB_CHECK_EQ(cfg[39], 9u);   // if1 bLength
   PB_CHECK_EQ(cfg[40], 4u);
   PB_CHECK_EQ(cfg[41], 1u);   // if1 number
-  PB_CHECK_EQ(cfg[43], 2u);   // if1 alt0 bNumEndpoints=2（iso 0x03/0x83 @48/@55）
-  PB_CHECK_EQ(cfg[50], 0x03u);  // alt0 iso OUT addr（EP@48, addr@50）
-  PB_CHECK_EQ(cfg[57], 0x83u);  // alt0 iso IN addr（EP@55, addr@57）
+  PB_CHECK_EQ(cfg[42], 0u);   // alt0
+  PB_CHECK_EQ(cfg[43], 0u);   // 无端点
 }
 
 // ———————— R2 追加：src/hci/controller.cpp:560-588 Disconnect / LE_Connection_Update ————————

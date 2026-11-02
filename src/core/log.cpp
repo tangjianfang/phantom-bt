@@ -5,7 +5,12 @@
 #include <mutex>
 #include <string>
 
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <chrono>
+#include <ctime>
+#endif
 
 namespace pb {
 
@@ -38,11 +43,22 @@ void log_write(LogLevel lv, std::string_view msg) {
   std::lock_guard<std::mutex> lk(g_mutex);
   if (static_cast<int>(lv) < static_cast<int>(g_level)) return;
 
+  char ts[32];
+#ifdef _WIN32
   SYSTEMTIME st;
   GetLocalTime(&st);
-  char ts[32];
   std::snprintf(ts, sizeof(ts), "%02d:%02d:%02d.%03d", st.wHour, st.wMinute, st.wSecond,
                 st.wMilliseconds);
+#else
+  using clock = std::chrono::system_clock;
+  auto now = clock::now();
+  std::time_t sec = clock::to_time_t(now);
+  std::tm tm{};
+  localtime_r(&sec, &tm);
+  auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+  std::snprintf(ts, sizeof(ts), "%02d:%02d:%02d.%03d", tm.tm_hour, tm.tm_min, tm.tm_sec,
+                (int)ms.count());
+#endif
 
   std::string line;
   line.reserve(msg.size() + 32);

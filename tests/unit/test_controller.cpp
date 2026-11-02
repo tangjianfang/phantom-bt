@@ -106,12 +106,12 @@ PB_TEST(controller_features_flags) {
   std::vector<uint8_t> e;
   PB_CHECK(c.pop_event(e));
   PB_CHECK_EQ(e[1], 12u);  // nump+op+status+8
-  PB_CHECK_EQ(e[6], 0xFF);   // byte0：加密等
+  PB_CHECK_EQ(e[6], 0xFB);   // byte0：Encryption bit 清掉（无 Encryption Change）
   PB_CHECK_EQ(e[10], 0xDB);  // byte4 bit6 = LE supported
 
   send(c, {0x03, 0x20, 0x00});  // LE_Read_Local_Supported_Features
   PB_CHECK(c.pop_event(e));
-  PB_CHECK_EQ(e[6], 0x01);  // LE encryption
+  PB_CHECK_EQ(e[6], 0x00);  // 不宣告 LE encryption
 }
 
 PB_TEST(controller_scan_enable_roundtrip) {

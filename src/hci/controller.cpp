@@ -244,11 +244,9 @@ const std::vector<uint16_t>& supported_command_list() {
       CMD_LE_SET_HOST_CHANNEL_CLASSIFICATION,
       CMD_LE_READ_CHANNEL_MAP,
       CMD_LE_READ_REMOTE_FEATURES,
-      CMD_LE_ENCRYPT,
-      CMD_LE_RAND,
-      CMD_LE_START_ENCRYPTION,
-      CMD_LE_LTK_REQUEST_REPLY,
-      CMD_LE_LTK_REQUEST_NEGATIVE_REPLY,
+      // LE 加密命令族（LE_Encrypt / LE_Rand / LE_Start_Encryption / LTK Reply /
+      // Negative Reply）未实现，且没有任何 Encryption Change 生成点。
+      // 位图不得宣告，否则主机在 SMP 之后会走这条路径并永远等加密事件。
       CMD_LE_READ_SUPPORTED_STATES,
       CMD_CMD_DISCONNECT,
   };
@@ -258,8 +256,10 @@ const std::vector<uint16_t>& supported_command_list() {
 struct MiniController::Impl {
   // 在 Supported_Commands 位图中置位本引擎支持的命令
   std::array<uint8_t, 64> commands_bitmap{};  // 逻辑上是 64B
-  std::array<uint8_t, 8> br_features{0xFF, 0x8F, 0x9F, 0xFE, 0xDB, 0xFF, 0x79, 0x83};
-  std::array<uint8_t, 8> le_features{0x01, 0x0F, 0, 0, 0, 0, 0, 0};
+  // octet0 bit2（Encryption）清掉：没有 Encryption Change 生成器，不得宣称支持加密。
+  std::array<uint8_t, 8> br_features{0xFB, 0x8F, 0x9F, 0xFE, 0xDB, 0xFF, 0x79, 0x83};
+  // octet0 bit0（LE Encryption）清掉，原因同上。
+  std::array<uint8_t, 8> le_features{0x00, 0x0F, 0, 0, 0, 0, 0, 0};
   uint16_t current_opcode = 0;
 };
 
@@ -525,6 +525,12 @@ void MiniController::handle_command(const uint8_t* p, size_t n) {
     case CMD_LE_ADD_DEVICE_TO_WHITE_LIST:
     case CMD_LE_REMOVE_DEVICE_FROM_WHITE_LIST:
     case CMD_LE_SET_HOST_CHANNEL_CLASSIFICATION:
+    case CMD_LE_CREATE_CONNECTION:
+    case CMD_LE_CREATE_CONNECTION_CANCEL:
+    case CMD_CMD_DISCONNECT:
+    case CMD_LE_READ_REMOTE_FEATURES:
+    case CMD_LE_READ_CHANNEL_MAP:
+    case CMD_LE_CONNECTION_UPDATE:
       break;
 
     default:
@@ -534,21 +540,49 @@ void MiniController::handle_command(const uint8_t* p, size_t n) {
       break;
   }
 
-  // LE_Create_Connection 特例：Command Status(pending) + 由 tick/空口完成（M2）
+  // LE_Read_Channel_Map：Command Complete + handle + 5 字节信道图（Vol4 Part E 7.8.19）。
+  // 不是 Command Status；没有返回参数主机会一直等。
+  if (cmd.op == CMD_LE_READ_CHANNEL_MAP) {
+    uint16_t h = 0;
+    if (qn >= 2) h = (uint16_t)(q[0] | (q[1] << 8));
+    uint8_t st = ST_UNKNOWN_CONN_ID;
+    {
+      std::lock_guard<std::mutex> lk(mx_);
+      if (h != 0 && h == conn_handle_) st = ST_SUCCESS;
+    }
+    // 37 个 LE 数据信道全部可用：低 37 bit 为 1（0x1F 在最高字节）。
+    std::vector<uint8_t> map = {st, (uint8_t)(h & 0xFF), (uint8_t)(h >> 8),
+                                0xFF, 0xFF, 0xFF, 0xFF, 0x1F};
+    auto evt = build_command_complete(1, cmd.op, map);
+    {
+      std::lock_guard<std::mutex> lk(mx_);
+      event_q_.push_back(evt);
+      ++event_count_;
+      op_log_.push_back("op=0x2015(LE_Read_Channel_Map) st=CC");
+    }
+    auto snoop = snoop_event;
+    if (snoop) snoop(evt);
+    return;
+  }
+
+  // LE_Create_Connection 特例：Command Status + 由 tick/空口完成（M2）。
+  // 已有连接或挂起建链时回 Command Disallowed，不再回成功（否则主机等一个不会来的
+  // Connection Complete）。
   if (cmd.op == CMD_LE_CREATE_CONNECTION || cmd.op == CMD_LE_CREATE_CONNECTION_CANCEL ||
       cmd.op == CMD_CMD_DISCONNECT || cmd.op == CMD_LE_READ_REMOTE_FEATURES ||
-      cmd.op == CMD_LE_READ_CHANNEL_MAP || cmd.op == CMD_LE_CONNECTION_UPDATE) {
+      cmd.op == CMD_LE_CONNECTION_UPDATE) {
+    uint8_t cs_status = ST_SUCCESS;
     if (cmd.op == CMD_LE_CREATE_CONNECTION) {
       // params: scan_int(2) scan_win(2) filter(1) peer_type(1) peer_addr(6) ...
-      if (qn >= 12) {
-        std::lock_guard<std::mutex> lk(mx_);
-        if (!conn_pending_ && conn_handle_ == 0) {
-          conn_pending_ = true;
-          conn_pending_type_ = q[5];
-          conn_pending_peer_ = 0;
-          for (int i = 0; i < 6; ++i) conn_pending_peer_ |= ((uint64_t)q[6 + i]) << (8 * i);
-          conn_fire_at_ = kConnDelayTicks;
-        }
+      std::lock_guard<std::mutex> lk(mx_);
+      if (conn_pending_ || conn_handle_ != 0) {
+        cs_status = ST_CMD_DISALLOWED;
+      } else if (qn >= 12) {
+        conn_pending_ = true;
+        conn_pending_type_ = q[5];
+        conn_pending_peer_ = 0;
+        for (int i = 0; i < 6; ++i) conn_pending_peer_ |= ((uint64_t)q[6 + i]) << (8 * i);
+        conn_fire_at_ = kConnDelayTicks;
       }
     } else if (cmd.op == CMD_LE_CREATE_CONNECTION_CANCEL) {
       std::lock_guard<std::mutex> lk(mx_);
@@ -602,7 +636,7 @@ void MiniController::handle_command(const uint8_t* p, size_t n) {
       std::lock_guard<std::mutex> lk(mx_);
       if (h == conn_handle_ && h != 0) {
         std::vector<uint8_t> rp{ST_SUCCESS, (uint8_t)(h & 0xFF), (uint8_t)(h >> 8),
-                                0x01, 0x0F, 0, 0, 0, 0, 0, 0};
+                                0x00, 0x0F, 0, 0, 0, 0, 0, 0};
         delayed_events_.push_back({3, build_le_meta(LE_EVT_READ_REMOTE_FEATURES_COMPLETE, rp)});
       } else {
         // 未知句柄 → 延迟失败事件
@@ -611,7 +645,7 @@ void MiniController::handle_command(const uint8_t* p, size_t n) {
         delayed_events_.push_back({3, build_le_meta(LE_EVT_READ_REMOTE_FEATURES_COMPLETE, rp)});
       }
     }
-    std::vector<uint8_t> evt = build_command_status(ST_SUCCESS, 1, cmd.op);
+    std::vector<uint8_t> evt = build_command_status(cs_status, 1, cmd.op);
     {
       std::lock_guard<std::mutex> lk(mx_);
       event_q_.push_back(evt);
@@ -675,13 +709,14 @@ void MiniController::tick(uint64_t now_ms) {
         if (status == ST_SUCCESS) {
           conn_handle_ = next_handle_++;
           conn_peer_ = conn_pending_peer_;
+          conn_peer_type_ = conn_pending_type_;
           links_.alloc(conn_peer_, conn_pending_type_);
           // 延迟：LE Read Remote Features Complete（3 tick ≈ 48ms）
           std::vector<uint8_t> rp;
           rp.push_back(ST_SUCCESS);
           rp.push_back(conn_handle_ & 0xFF);
           rp.push_back(conn_handle_ >> 8);
-          const uint8_t feat[8] = {0x01, 0x0F, 0, 0, 0, 0, 0, 0};
+          const uint8_t feat[8] = {0x00, 0x0F, 0, 0, 0, 0, 0, 0};
           rp.insert(rp.end(), feat, feat + 8);
           delayed_events_.push_back({3, build_le_meta(LE_EVT_READ_REMOTE_FEATURES_COMPLETE, rp)});
         }
@@ -698,6 +733,7 @@ void MiniController::tick(uint64_t now_ms) {
           if (dh != 0 && dh == conn_handle_) {
             conn_handle_ = 0;
             conn_peer_ = 0;
+            conn_peer_type_ = 0;
             links_.release(dh);
             reasm_.reset();
           }
